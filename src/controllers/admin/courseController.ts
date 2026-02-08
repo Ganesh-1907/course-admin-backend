@@ -28,6 +28,15 @@ export const createCourse = asyncHandler(async (req: CustomRequest, res: Respons
     throw new AppError(401, 'User not authenticated');
   }
 
+  // Parse countryPricing if string (from FormData)
+  if (typeof req.body.countryPricing === 'string') {
+    try {
+      req.body.countryPricing = JSON.parse(req.body.countryPricing);
+    } catch (error) {
+      throw new AppError(400, 'Invalid countryPricing format');
+    }
+  }
+
   const {
     courseName,
     description,
@@ -49,6 +58,9 @@ export const createCourse = asyncHandler(async (req: CustomRequest, res: Respons
     countryPricing,
   } = req.body;
 
+
+
+
   if (!courseName || !mentor || !serviceType || !startDate || !endDate || !price) {
     throw new AppError(400, 'Missing required fields');
   }
@@ -59,6 +71,14 @@ export const createCourse = asyncHandler(async (req: CustomRequest, res: Respons
 
   const courseId = await generateCourseId(Course);
   const finalPrice = calculateFinalPrice(price, discountPercentage);
+
+  let brochure;
+  if (req.file) {
+    brochure = {
+      url: `${req.protocol}://${req.get('host')}/uploads/brochures/${req.file.filename}`,
+      fileName: req.file.originalname,
+    };
+  }
 
   const course = new Course({
     courseId,
@@ -83,12 +103,59 @@ export const createCourse = asyncHandler(async (req: CustomRequest, res: Respons
     courseType,
     address,
     countryPricing,
+    brochure,
   });
 
   await course.save();
 
   const response = formatResponse(true, course, 'Course created successfully', 201);
   res.status(201).json(response);
+});
+
+// ... (helpers)
+
+/**
+ * Update Course
+ */
+export const updateCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
+  // Parse countryPricing if string (from FormData)
+  if (typeof req.body.countryPricing === 'string') {
+    try {
+      req.body.countryPricing = JSON.parse(req.body.countryPricing);
+    } catch (error) {
+      // Ignore or throw
+    }
+  }
+
+  const { courseId } = req.params;
+  const course = await findCourseByParam(courseId);
+
+  if (!course) {
+    throw new AppError(404, 'Course not found');
+  }
+
+  if (req.body.startDate || req.body.endDate) {
+    const startDate = new Date(req.body.startDate || course.startDate);
+    const endDate = new Date(req.body.endDate || course.endDate);
+
+    if (startDate >= endDate) {
+      throw new AppError(400, 'Start date must be before end date');
+    }
+  }
+
+  if (req.file) {
+    const brochure = {
+      url: `${req.protocol}://${req.get('host')}/uploads/brochures/${req.file.filename}`,
+      fileName: req.file.originalname,
+    };
+    req.body.brochure = brochure;
+  }
+
+  Object.assign(course, req.body);
+  await course.save();
+
+  const response = formatResponse(true, course, 'Course updated successfully', 200);
+  res.status(200).json(response);
 });
 
 const normalizeKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -206,10 +273,10 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
     batchtype: 'batchType',
     coursetype: 'courseType',
     address: 'address',
+    brochure: 'brochure', // Map 'brochure' column
 
     difficultylevel: 'difficultyLevel',
     level: 'difficultyLevel',
-    // Removed maxparticipants, generic price/fee
   };
 
   const coursesToInsert: any[] = [];
@@ -225,7 +292,9 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
     { country: "Singapore", currency: "SGD" }
   ];
 
-  rows.forEach((row, index) => {
+  // Use for...of to allow await for async operations (URL validation)
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
     const mapped = normalizeRowKeys(row, keyMap);
 
     const courseName = mapped.courseName ? String(mapped.courseName).trim() : '';
@@ -242,18 +311,39 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
     const batchType = mapped.batchType ? String(mapped.batchType).trim() : 'Weekdays';
     const courseType = mapped.courseType ? String(mapped.courseType).trim() : 'Online';
     const address = mapped.address ? String(mapped.address).trim() : '';
+    const brochureUrl = mapped.brochure ? String(mapped.brochure).trim() : '';
 
     const duration = parseNumber(mapped.duration);
     const difficultyLevel = normalizeDifficultyLevel(mapped.difficultyLevel);
 
     if (!courseName || !description || !mentor || !serviceType || !startDate || !endDate) {
       errors.push({ row: index + 2, message: 'Missing required fields' });
-      return;
+      continue;
     }
 
     if (startDate >= endDate) {
       errors.push({ row: index + 2, message: 'Start date must be before end date' });
-      return;
+      continue;
+    }
+
+    // Validate Brochure URL if present
+    let brochureObj;
+    if (brochureUrl) {
+      try {
+        const response = await fetch(brochureUrl, { method: 'HEAD' });
+        if (!response.ok) {
+          errors.push({ row: index + 2, message: `Brochure URL not accessible (Status: ${response.status})` });
+          continue;
+        }
+        // If accessible, use it
+        brochureObj = {
+          url: brochureUrl,
+          fileName: 'brochure.pdf' // Default name as we don't know file name from URL easily without content-disposition
+        };
+      } catch (err: any) {
+        errors.push({ row: index + 2, message: `Brochure URL invalid or unreachable` });
+        continue;
+      }
     }
 
     const courseId = `CRS${nextNumber}`;
@@ -270,15 +360,12 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
       for (const [rKey, rVal] of Object.entries(row)) {
         const normKey = normalizeKey(rKey);
 
-        // Check for Fee (e.g., feeusa)
         if (normKey === `fee${countryKey}`) {
           feeVal = parseNumber(rVal) || 0;
         }
-        // Check for Discount (e.g., discountusa)
         if (normKey === `discount${countryKey}`) {
           discountVal = parseNumber(rVal) || 0;
         }
-        // Check for Final Price (e.g., priceusa)
         if (normKey === `price${countryKey}`) {
           finalPriceVal = parseNumber(rVal) || 0;
         }
@@ -296,14 +383,11 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
       };
     });
 
-    // We need a base price for the main table (often USA price is used as base in listings)
-    // Or we can just grab the first country's price as 'default'
     const usaPricing = countryPricing.find(c => c.country === "USA") || countryPricing[0];
     const basePrice = usaPricing ? usaPricing.price : 0;
     const baseDiscount = usaPricing ? usaPricing.discountPercentage : 0;
     const baseFinalPrice = usaPricing ? usaPricing.finalPrice : 0;
 
-    // Address Validations
     let finalAddress = address;
     if (courseType.toLowerCase() === 'online') {
       finalAddress = '';
@@ -317,33 +401,37 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
       serviceType,
       startDate,
       endDate,
-
-      // Use USA/First Country as "Main" price for listing sorting/display if needed
       price: basePrice,
       discountPercentage: baseDiscount,
       finalPrice: baseFinalPrice,
-
       difficultyLevel: difficultyLevel ?? undefined,
       duration: duration ?? undefined,
-      // Removed maxParticipants
-      capacityRemaining: 100, // Default capacity if field removed
+      capacityRemaining: 100,
       createdBy: req.user.id,
       isActive: true,
-
-      // New inserted fields
       language,
       startTime,
       endTime,
       batchType,
       courseType,
       address: finalAddress,
-      countryPricing
+      countryPricing,
+      brochure: brochureObj
     });
-  });
+  }
+
+  // All or Nothing Logic
+  if (errors.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Import failed due to errors in data (All or Nothing policy)',
+      errors
+    });
+  }
 
   let importedCount = 0;
   if (coursesToInsert.length) {
-    const inserted = await Course.insertMany(coursesToInsert, { ordered: false });
+    const inserted = await Course.insertMany(coursesToInsert, { ordered: true });
     importedCount = inserted.length;
   }
 
@@ -352,8 +440,8 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
     {
       totalRows: rows.length,
       importedCount,
-      failedCount: rows.length - importedCount,
-      errors,
+      failedCount: 0,
+      errors: [],
     },
     'Courses imported successfully',
     200
@@ -429,29 +517,7 @@ export const getCourseById = asyncHandler(async (req: CustomRequest, res: Respon
 /**
  * Update Course
  */
-export const updateCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { courseId } = req.params;
-  const course = await findCourseByParam(courseId);
 
-  if (!course) {
-    throw new AppError(404, 'Course not found');
-  }
-
-  if (req.body.startDate || req.body.endDate) {
-    const startDate = new Date(req.body.startDate || course.startDate);
-    const endDate = new Date(req.body.endDate || course.endDate);
-
-    if (startDate >= endDate) {
-      throw new AppError(400, 'Start date must be before end date');
-    }
-  }
-
-  Object.assign(course, req.body);
-  await course.save();
-
-  const response = formatResponse(true, course, 'Course updated successfully', 200);
-  res.status(200).json(response);
-});
 
 /**
  * Delete Course

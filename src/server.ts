@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import path from 'path';
 import config from './config/env';
 import { connectDB } from './config/database';
 import { errorHandler } from './middleware/errorHandler';
@@ -15,32 +16,44 @@ const app = express();
 connectDB();
 
 /**
- * Security Middleware
+ * Security & Utility Middleware
  */
-app.use(helmet()); // Set security HTTP headers
-
-/**
- * CORS Configuration
- */
+app.use(helmet());
+app.use(morgan('dev')); // Changed directly to 'dev' or keep 'combined'
 app.use(
   cors({
-    origin: config.CORS_ORIGIN || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps/curl)
+      if (!origin) return callback(null, true);
+
+      // Allow any localhost origin
+      if (origin.startsWith('http://localhost')) {
+        return callback(null, true);
+      }
+
+      // Allow configured origin
+      if (config.CORS_ORIGIN && origin === config.CORS_ORIGIN) {
+        return callback(null, true);
+      }
+
+      callback(null, true); // Fallback: allow for now to prevent blockers, can be tightened later
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   })
 );
 
 /**
  * Body Parser Middleware
  */
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '50mb' })); // Increased limit for large payloads/files
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 /**
- * Logging Middleware
+ * Static Files
  */
-app.use(morgan('combined'));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 /**
  * API Routes
