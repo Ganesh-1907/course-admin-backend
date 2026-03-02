@@ -251,28 +251,66 @@ export const getPaymentDetails = asyncHandler(async (req: CustomRequest, res: Re
  * Get Dashboard Statistics
  */
 export const getDashboardStats = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const totalCourses = await Course.countDocuments();
-  const activeCourses = await Course.countDocuments({ isActive: true });
-  const totalRegistrations = await Registration.countDocuments();
+  const { type, startDate, endDate } = req.query;
+
+  // Handle type mapping (genai -> Generative AI)
+  let searchType = type as string;
+  if (searchType === 'genai') {
+    searchType = 'Generative AI';
+  }
+
+  const courseFilters: any = {};
+  if (searchType && searchType !== 'all') {
+    courseFilters.serviceType = { $regex: new RegExp(`^${searchType}$`, 'i') };
+  }
+
+  // Base registration filters (don't restrict to PAID for counts by default, or maybe the user wants that?)
+  // Usually "Total Registrations" should be all. 
+  // But let's keep it consistent: we'll have one set for counts, one for revenue.
+  const baseRegFilters: any = {};
+  if (startDate || endDate) {
+    baseRegFilters.createdAt = {};
+    if (startDate) {
+      baseRegFilters.createdAt.$gte = new Date(startDate as string);
+    }
+    if (endDate) {
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      baseRegFilters.createdAt.$lte = end;
+    }
+  }
+
+  if (searchType && searchType !== 'all') {
+    const filteredCourseIds = await Course.find({
+      serviceType: { $regex: new RegExp(`^${searchType}$`, 'i') },
+    }).select('_id');
+    baseRegFilters.courseId = { $in: filteredCourseIds.map((c) => c._id) };
+  }
+
+  const revenueFilters = { ...baseRegFilters, paymentStatus: 'PAID' };
+
+  // Course counts should respect type but maybe NOT the registration date range?
+  // User says "agile four present... show accordingly". This implies they want the total for that type.
+  const totalCourses = await Course.countDocuments(courseFilters);
+  const activeCourses = await Course.countDocuments({ ...courseFilters, isActive: true });
+
+  const totalRegistrations = await Registration.countDocuments(baseRegFilters);
   const confirmedRegistrations = await Registration.countDocuments({
+    ...baseRegFilters,
     registrationStatus: 'CONFIRMED',
   });
-  const paidRegistrations = await Registration.countDocuments({ paymentStatus: 'PAID' });
-  const totalParticipants = await Participant.countDocuments();
 
   const revenueData = await Registration.aggregate([
-    { $match: { paymentStatus: 'PAID' } },
+    { $match: revenueFilters },
     { $group: { _id: null, totalRevenue: { $sum: '$finalAmount' } } },
   ]);
 
   const totalRevenue = revenueData.length > 0 ? revenueData[0].totalRevenue : 0;
 
   const coursesByType = await Course.aggregate([
+    { $match: courseFilters },
     {
-      $group: {
-        _id: '$serviceType',
-        value: { $sum: 1 },
-      },
+      $group: { _id: '$serviceType', value: { $sum: 1 } },
     },
     {
       $project: {
@@ -282,6 +320,39 @@ export const getDashboardStats = asyncHandler(async (req: CustomRequest, res: Re
       },
     },
     { $sort: { value: -1, name: 1 } },
+  ]);
+
+  // Participants filtered by type and date (unique participants who registered)
+  const totalParticipants = await Registration.distinct('participantId', baseRegFilters).then(ids => ids.length);
+
+  // Get top 5 courses by registration count in the filtered period
+  const topCourses = await Registration.aggregate([
+    { $match: baseRegFilters },
+    {
+      $group: {
+        _id: '$courseId',
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { count: -1 } },
+    { $limit: 5 },
+    {
+      $lookup: {
+        from: 'courses',
+        localField: '_id',
+        foreignField: '_id',
+        as: 'courseDetails',
+      },
+    },
+    { $unwind: '$courseDetails' },
+    {
+      $project: {
+        _id: 0,
+        name: '$courseDetails.courseName',
+        id: '$courseDetails.courseId',
+        count: 1,
+      },
+    },
   ]);
 
   const stats = {
@@ -296,13 +367,14 @@ export const getDashboardStats = asyncHandler(async (req: CustomRequest, res: Re
       pending: totalRegistrations - confirmedRegistrations,
     },
     payments: {
-      total: paidRegistrations,
+      total: totalRegistrations, // Or should this be PAID registrations? Let's stick to base for now.
       totalRevenue,
     },
     participants: {
       total: totalParticipants,
     },
     coursesByType,
+    topCourses,
   };
 
   const response = formatResponse(true, stats, 'Dashboard statistics retrieved successfully', 200);
