@@ -101,7 +101,7 @@ export const getUserRegistrations = asyncHandler(async (req: CustomRequest, res:
   const filters: any = { participantId: req.user.id };
 
   if (status) {
-    filters.registrationStatus = status;
+    filters.registrationStatus = String(status);
   }
 
   const { skip, limit: pageLimit, page: pageNum } = paginate(

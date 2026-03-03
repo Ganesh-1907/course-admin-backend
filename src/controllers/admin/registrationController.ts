@@ -22,27 +22,31 @@ export const getAllRegistrations = asyncHandler(async (req: CustomRequest, res: 
   const filters: any = {};
 
   if (courseId) {
-    filters.courseId = new mongoose.Types.ObjectId(courseId as string);
+    const courseIdStr = String(courseId);
+    if (mongoose.Types.ObjectId.isValid(courseIdStr)) {
+      filters.courseId = new mongoose.Types.ObjectId(courseIdStr);
+    }
   }
 
   if (status) {
-    filters.registrationStatus = { $regex: status, $options: 'i' };
+    filters.registrationStatus = { $regex: String(status), $options: 'i' };
   }
 
   if (paymentStatus) {
-    filters.paymentStatus = { $regex: paymentStatus, $options: 'i' };
+    filters.paymentStatus = { $regex: String(paymentStatus), $options: 'i' };
   }
 
   if (search) {
+    const searchStr = String(search);
     const participantIds = await Participant.find({
       $or: [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { name: { $regex: searchStr, $options: 'i' } },
+        { email: { $regex: searchStr, $options: 'i' } },
       ],
     }).select('_id');
 
     const courseIds = await Course.find({
-      courseName: { $regex: search, $options: 'i' },
+      courseName: { $regex: searchStr, $options: 'i' },
     }).select('_id');
 
     filters.$or = [
@@ -391,39 +395,48 @@ export const exportRegistrations = asyncHandler(async (req: CustomRequest, res: 
   const filters: any = {};
 
   if (courseId) {
-    filters.courseId = new mongoose.Types.ObjectId(courseId as string);
+    const courseIdStr = String(courseId);
+    if (mongoose.Types.ObjectId.isValid(courseIdStr)) {
+      filters.courseId = new mongoose.Types.ObjectId(courseIdStr);
+    }
   }
 
   if (status) {
-    filters.registrationStatus = { $regex: status, $options: 'i' };
+    filters.registrationStatus = { $regex: String(status), $options: 'i' };
   }
 
   if (paymentStatus) {
-    filters.paymentStatus = { $regex: paymentStatus, $options: 'i' };
+    filters.paymentStatus = { $regex: String(paymentStatus), $options: 'i' };
   }
 
   if (startDate || endDate) {
     filters.createdAt = {};
     if (startDate) {
-      filters.createdAt.$gte = new Date(startDate as string);
+      const start = new Date(String(startDate));
+      if (!isNaN(start.getTime())) {
+        filters.createdAt.$gte = start;
+      }
     }
     if (endDate) {
-      const end = new Date(endDate as string);
-      end.setHours(23, 59, 59, 999);
-      filters.createdAt.$lte = end;
+      const end = new Date(String(endDate));
+      if (!isNaN(end.getTime())) {
+        end.setHours(23, 59, 59, 999);
+        filters.createdAt.$lte = end;
+      }
     }
   }
 
   if (search) {
+    const searchStr = String(search);
     const participantIds = await Participant.find({
       $or: [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { name: { $regex: searchStr, $options: 'i' } },
+        { email: { $regex: searchStr, $options: 'i' } },
       ],
     }).select('_id');
 
     const courseIds = await Course.find({
-      courseName: { $regex: search, $options: 'i' },
+      courseName: { $regex: searchStr, $options: 'i' },
     }).select('_id');
 
     filters.$or = [

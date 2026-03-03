@@ -14,14 +14,15 @@ export const getAllCourses = asyncHandler(async (req: CustomRequest, res: Respon
   const filters: any = { isActive: true };
 
   if (search) {
+    const searchStr = String(search);
     filters.$or = [
-      { courseName: { $regex: search, $options: 'i' } },
-      { mentor: { $regex: search, $options: 'i' } },
+      { courseName: { $regex: searchStr, $options: 'i' } },
+      { mentor: { $regex: searchStr, $options: 'i' } },
     ];
   }
 
   if (serviceType && serviceType !== 'All Types') {
-    filters.serviceType = serviceType;
+    filters.serviceType = String(serviceType);
   }
 
   const { skip, limit: pageLimit, page: pageNum } = paginate(
@@ -119,11 +120,12 @@ export const searchCourses = asyncHandler(async (req: CustomRequest, res: Respon
     .skip(skip)
     .limit(pageLimit);
 
+  const searchStr = String(q);
   const total = await Course.countDocuments({
     $or: [
-      { courseName: { $regex: q, $options: 'i' } },
-      { description: { $regex: q, $options: 'i' } },
-      { mentor: { $regex: q, $options: 'i' } },
+      { courseName: { $regex: searchStr, $options: 'i' } },
+      { description: { $regex: searchStr, $options: 'i' } },
+      { mentor: { $regex: searchStr, $options: 'i' } },
     ],
     isActive: true,
   });

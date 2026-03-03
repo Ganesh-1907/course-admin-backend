@@ -330,6 +330,14 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
     let brochureObj;
     if (brochureUrl) {
       try {
+        const url = new URL(brochureUrl);
+        // Block internal IPs and localhost
+        const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254'];
+        if (blockedHosts.includes(url.hostname) || url.hostname.startsWith('192.168.') || url.hostname.startsWith('10.')) {
+          errors.push({ row: index + 2, message: `Brochure URL not allowed (Security Policy)` });
+          continue;
+        }
+
         const response = await fetch(brochureUrl, { method: 'HEAD' });
         if (!response.ok) {
           errors.push({ row: index + 2, message: `Brochure URL not accessible (Status: ${response.status})` });
@@ -459,14 +467,15 @@ export const getAllCourses = asyncHandler(async (req: CustomRequest, res: Respon
   const filters: any = {};
 
   if (search) {
+    const searchStr = String(search);
     filters.$or = [
-      { courseName: { $regex: search, $options: 'i' } },
-      { mentor: { $regex: search, $options: 'i' } },
+      { courseName: { $regex: searchStr, $options: 'i' } },
+      { mentor: { $regex: searchStr, $options: 'i' } },
     ];
   }
 
   if (serviceType && serviceType !== 'All Types') {
-    filters.serviceType = serviceType;
+    filters.serviceType = String(serviceType);
   }
 
   const { skip, limit: pageLimit, page: pageNum } = paginate(
