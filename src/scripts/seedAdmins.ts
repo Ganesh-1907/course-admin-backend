@@ -31,7 +31,7 @@ const seedAdmins = async () => {
         name: 'Admin Two',
         email: 'admin.two@gmail.com',
         password: 'admin@123',
-        phone: '+91-8888888888',
+        phone: '+91-7816087488',
         department: 'Operations',
         role: 'admin',
         isActive: true,
