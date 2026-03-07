@@ -28,6 +28,10 @@ export interface IParticipant extends Document {
   status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
   emailVerified: boolean;
   emailVerificationToken?: string;
+  otp?: string;
+  otpExpiry?: Date;
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
   preferences?: {
     newsletter: boolean;
     notifications: boolean;
@@ -58,12 +62,7 @@ const participantSchema = new Schema<IParticipant>(
     },
     mobile: {
       type: String,
-      required: [true, 'Mobile number is required'],
       trim: true,
-      match: [
-        /^[+]?[(]?[0-9]{3}[)]?[-\s.]?[0-9]{3}[-\s.]?[0-9]{4,6}$/,
-        'Please provide a valid mobile number',
-      ],
       index: true,
     },
     password: {
@@ -125,6 +124,22 @@ const participantSchema = new Schema<IParticipant>(
     },
     emailVerificationToken: {
       type: String,
+      select: false,
+    },
+    otp: {
+      type: String,
+      select: false,
+    },
+    otpExpiry: {
+      type: Date,
+      select: false,
+    },
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+    resetPasswordExpiry: {
+      type: Date,
       select: false,
     },
     preferences: {

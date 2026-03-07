@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Response } from 'express';
 import { CustomRequest } from '../../types/common';
 import { Participant } from '../../models';
@@ -9,6 +10,7 @@ import {
   formatResponse,
 } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
+import { sendOTPEmail } from '../../utils/emailService';
 
 /**
  * User Register
@@ -16,7 +18,7 @@ import { AppError, asyncHandler } from '../../middleware/errorHandler';
 export const registerUser = asyncHandler(async (req: CustomRequest, res: Response) => {
   const { name, email, mobile, password, confirmPassword, acceptTerms } = req.body;
 
-  if (!name || !email || !mobile || !password || !confirmPassword) {
+  if (!name || !email || !password || !confirmPassword) {
     throw new AppError(400, 'All fields are required');
   }
 
@@ -37,11 +39,11 @@ export const registerUser = asyncHandler(async (req: CustomRequest, res: Respons
   }
 
   const existingParticipant = await Participant.findOne({
-    $or: [{ email: email.toLowerCase() }, { mobile }],
+    email: email.toLowerCase()
   });
 
   if (existingParticipant) {
-    throw new AppError(400, 'Email or mobile already registered');
+    throw new AppError(400, 'Email already registered');
   }
 
   const hashedPassword = await hashPassword(password);
@@ -227,3 +229,112 @@ export const changePassword = asyncHandler(async (req: CustomRequest, res: Respo
   const response = formatResponse(true, null, 'Password changed successfully', 200);
   res.status(200).json(response);
 });
+
+/**
+ * Forgot Password - Send OTP
+ */
+export const forgotPassword = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { email } = req.body;
+
+  if (!email) {
+    throw new AppError(400, 'Email is required');
+  }
+
+  const participant = await Participant.findOne({ email: email.toLowerCase() });
+
+  if (!participant) {
+    throw new AppError(404, 'User with this email does not exist');
+  }
+
+  // Generate 6-digit OTP
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  participant.otp = otp;
+  participant.otpExpiry = otpExpiry;
+  await participant.save();
+
+  try {
+    await sendOTPEmail(participant.email, otp);
+    
+    const response = formatResponse(true, null, 'OTP sent to your email successfully', 200);
+    res.status(200).json(response);
+  } catch (error) {
+    participant.otp = undefined;
+    participant.otpExpiry = undefined;
+    await participant.save();
+    throw new AppError(500, 'Email could not be sent. Please try again later.');
+  }
+});
+
+/**
+ * Verify OTP
+ */
+export const verifyOTP = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    throw new AppError(400, 'Email and OTP are required');
+  }
+
+  const participant = await Participant.findOne({
+    email: email.toLowerCase(),
+    otp,
+    otpExpiry: { $gt: new Date() },
+  });
+
+  if (!participant) {
+    throw new AppError(400, 'Invalid or expired OTP');
+  }
+
+  // Generate a temporary reset token to ensure the same user resets the password
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  participant.resetPasswordToken = resetToken;
+  participant.resetPasswordExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+  
+  // Clear OTP
+  participant.otp = undefined;
+  participant.otpExpiry = undefined;
+  await participant.save();
+
+  const response = formatResponse(true, { resetToken }, 'OTP verified successfully', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Reset Password
+ */
+export const resetPassword = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { email, resetToken, newPassword, confirmPassword } = req.body;
+
+  if (!email || !resetToken || !newPassword || !confirmPassword) {
+    throw new AppError(400, 'All fields are required');
+  }
+
+  if (newPassword !== confirmPassword) {
+    throw new AppError(400, 'Passwords do not match');
+  }
+
+  if (newPassword.length < 6) {
+    throw new AppError(400, 'Password must be at least 6 characters');
+  }
+
+  const participant = await Participant.findOne({
+    email: email.toLowerCase(),
+    resetPasswordToken: resetToken,
+    resetPasswordExpiry: { $gt: new Date() },
+  });
+
+  if (!participant) {
+    throw new AppError(400, 'Invalid or expired reset token');
+  }
+
+  participant.password = await hashPassword(newPassword);
+  participant.resetPasswordToken = undefined;
+  participant.resetPasswordExpiry = undefined;
+  await participant.save();
+
+  const response = formatResponse(true, null, 'Password reset successful. You can now login.', 200);
+  res.status(200).json(response);
+});
+

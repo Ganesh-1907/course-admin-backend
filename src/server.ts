@@ -34,23 +34,7 @@ const limiter = rateLimit({
 // Apply rate limiter to all routes
 app.use('/api/', limiter);
 
-/**
- * Custom Security Header Middleware
- * Blocks requests from tools like Postman/curl that don't send this header
- */
-const securityHeaderMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  const appToken = req.headers['x-cms-app-token'];
-  if (appToken !== 'CMS-V3-SECURE-ACCESS') {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied: Invalid application token',
-    });
-  }
-  next();
-};
-
-app.use('/api', securityHeaderMiddleware);
-
+// CORS Configuration
 const ALLOWED_ORIGINS = [
   'http://localhost:8080',
   'http://localhost:8081',
@@ -61,8 +45,8 @@ const ALLOWED_ORIGINS = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Reject any request without an origin (Postman/curl)
-      if (!origin) return callback(new Error('Origin header required'));
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
 
       if (ALLOWED_ORIGINS.includes(origin)) {
         return callback(null, true);
@@ -75,6 +59,28 @@ app.use(
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CMS-App-Token'],
   })
 );
+
+/**
+ * Custom Security Header Middleware
+ * Blocks unauthorized requests
+ */
+const securityHeaderMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  // Allow preflight OPTIONS requests to pass through
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+
+  const appToken = req.headers['x-cms-app-token'];
+  if (appToken !== 'CMS-V3-SECURE-ACCESS') {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied: Invalid application token',
+    });
+  }
+  next();
+};
+
+app.use('/api', securityHeaderMiddleware);
 
 /**
  * Body Parser Middleware

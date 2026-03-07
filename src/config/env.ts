@@ -16,6 +16,16 @@ export const config = {
 
   // CORS
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',
+
+  // SMTP
+  SMTP: {
+    HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
+    PORT: parseInt(process.env.SMTP_PORT || '587', 10),
+    USER: process.env.SMTP_USER,
+    PASS: process.env.SMTP_PASS,
+    FROM_NAME: process.env.SMTP_FROM_NAME || 'Viovn EduTech',
+    FROM_EMAIL: process.env.SMTP_FROM_EMAIL || 'no-reply@viovn.com',
+  },
 };
 
 export default config;
