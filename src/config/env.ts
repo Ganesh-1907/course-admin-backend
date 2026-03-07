@@ -26,6 +26,9 @@ export const config = {
     FROM_NAME: process.env.SMTP_FROM_NAME || 'Viovn EduTech',
     FROM_EMAIL: process.env.SMTP_FROM_EMAIL || 'no-reply@viovn.com',
   },
+  // Session secret
+  SESSION_SECRET: process.env.SESSION_SECRET || 'your_session_secret_change_in_production',
 };
+
 
 export default config;
