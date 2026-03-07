@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
+import session from 'express-session';
+import './types/session'; // Explicitly load session types
 import rateLimit from 'express-rate-limit';
 import config from './config/env';
 import { connectDB } from './config/database';
@@ -39,6 +41,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8080',
   'http://localhost:8081',
   'http://localhost:8082',
+  'http://localhost:5173',
   config.CORS_ORIGIN
 ].filter(Boolean);
 
@@ -57,6 +60,23 @@ app.use(
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CMS-App-Token'],
+  })
+);
+
+/**
+ * Session Middleware
+ */
+app.use(
+  session({
+    secret: config.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: true,
+    cookie: {
+      secure: config.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      sameSite: config.NODE_ENV === 'production' ? 'none' : 'lax'
+    },
   })
 );
 
