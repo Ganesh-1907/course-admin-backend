@@ -1,12 +1,13 @@
-import mongoose from 'mongoose';
-import config from './env';
+import { db } from '../db';
+import { sql } from 'drizzle-orm';
 
 export const connectDB = async (): Promise<void> => {
   try {
-    const conn = await mongoose.connect(config.MONGODB_URI);
-    console.log(`✓ MongoDB Connected: ${conn.connection.host}`);
+    // Check if we can execute a simple query to verify connection
+    await db.execute(sql`SELECT 1`);
+    console.log(`✓ PostgreSQL Connected (via Drizzle)`);
   } catch (error) {
-    console.error(`✗ MongoDB Connection Error:`, error);
+    console.error(`✗ PostgreSQL Connection Error:`, error);
     process.exit(1);
   }
 };

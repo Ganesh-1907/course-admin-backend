@@ -1,7 +1,12 @@
 import crypto from 'crypto';
 import { Response } from 'express';
 import { CustomRequest } from '../../types/common';
-import { Participant } from '../../models';
+import { db, users, registrations, courseSchedules, courses } from '../../models';
+import {
+  eq,
+  and,
+  sql,
+} from 'drizzle-orm';
 import {
   generateToken,
   hashPassword,
@@ -10,13 +15,12 @@ import {
   formatResponse,
 } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
-import { sendOTPEmail } from '../../utils/emailService';
 
 /**
  * User Register
  */
 export const registerUser = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { name, email, mobile, password, confirmPassword, acceptTerms } = req.body;
+  const { name, email, password, confirmPassword, acceptTerms } = req.body;
 
   if (!name || !email || !password || !confirmPassword) {
     throw new AppError(400, 'All fields are required');
@@ -38,37 +42,38 @@ export const registerUser = asyncHandler(async (req: CustomRequest, res: Respons
     throw new AppError(400, 'You must accept the terms and conditions');
   }
 
-  const existingParticipant = await Participant.findOne({
-    email: email.toLowerCase()
-  });
+  const existing = await db.select()
+    .from(users)
+    .where(eq(sql`LOWER(${users.email})`, email.toLowerCase()))
+    .limit(1);
 
-  if (existingParticipant) {
+  if (existing.length > 0) {
     throw new AppError(400, 'Email already registered');
   }
 
   const hashedPassword = await hashPassword(password);
 
-  const participant = new Participant({
+  const newUser = await db.insert(users).values({
     name,
     email: email.toLowerCase(),
-    mobile,
     password: hashedPassword,
+    role: 'participant',
     status: 'ACTIVE',
-    emailVerified: false,
-  });
+  }).returning();
 
-  await participant.save();
+  const user = newUser[0];
 
-  const token = generateToken(participant._id.toString(), 'user');
+  const token = generateToken(user.id, 'participant');
 
   const response = formatResponse(
     true,
     {
       token,
-      participant: {
-        _id: participant._id,
-        name: participant.name,
-        email: participant.email,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
       },
     },
     'Registration successful',
@@ -92,38 +97,38 @@ export const loginUser = asyncHandler(async (req: CustomRequest, res: Response) 
     throw new AppError(400, 'Invalid email format');
   }
 
-  const participant = await Participant.findOne({
-    email: email.toLowerCase(),
-  }).select('+password');
+  const results = await db.select()
+    .from(users)
+    .where(eq(sql`LOWER(${users.email})`, email.toLowerCase()))
+    .limit(1);
 
-  if (!participant) {
+  const user = results[0];
+
+  if (!user) {
     throw new AppError(401, 'Invalid email or password');
   }
 
-  if (!participant.password) {
-    throw new AppError(401, 'Password not set for this account');
+  if (user.status !== 'ACTIVE') {
+    throw new AppError(403, 'Account is inactive or suspended');
   }
 
-  if (participant.status === 'SUSPENDED') {
-    throw new AppError(403, 'Account is suspended');
-  }
-
-  const isPasswordMatch = await comparePassword(password, participant.password);
+  const isPasswordMatch = await comparePassword(password, user.password);
 
   if (!isPasswordMatch) {
     throw new AppError(401, 'Invalid email or password');
   }
 
-  const token = generateToken(participant._id.toString(), 'user');
+  const token = generateToken(user.id, user.role || 'participant');
 
   const response = formatResponse(
     true,
     {
       token,
-      participant: {
-        _id: participant._id,
-        name: participant.name,
-        email: participant.email,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
       },
     },
     'Login successful',
@@ -141,16 +146,41 @@ export const getUserProfile = asyncHandler(async (req: CustomRequest, res: Respo
     throw new AppError(401, 'User not authenticated');
   }
 
-  const participant = await Participant.findById(req.user.id).populate({
-    path: 'registeredCourses.courseId',
-    select: 'courseName courseId serviceType',
-  });
+  const userResults = await db.select()
+    .from(users)
+    .where(eq(users.id, req.user.id))
+    .limit(1);
 
-  if (!participant) {
-    throw new AppError(404, 'Participant not found');
+  const user = userResults[0];
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
   }
 
-  const response = formatResponse(true, participant, 'Profile retrieved successfully', 200);
+  // Fetch registered courses
+  const registeredCourses = await db.select({
+    id: registrations.id,
+    registrationDate: registrations.createdAt,
+    status: registrations.status,
+    course: {
+      id: courseSchedules.id,
+      courseName: courses.name,
+    }
+  })
+    .from(registrations)
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(eq(registrations.userId, req.user.id));
+
+  const profile = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    registeredCourses
+  };
+
+  const response = formatResponse(true, profile, 'Profile retrieved successfully', 200);
   res.status(200).json(response);
 });
 
@@ -162,26 +192,25 @@ export const updateUserProfile = asyncHandler(async (req: CustomRequest, res: Re
     throw new AppError(401, 'User not authenticated');
   }
 
-  const { name, mobile, organization, designation, yearsOfExperience, address } = req.body;
+  const { name } = req.body;
 
-  const participant = await Participant.findByIdAndUpdate(
-    req.user.id,
-    {
-      ...(name && { name }),
-      ...(mobile && { mobile }),
-      ...(organization && { organization }),
-      ...(designation && { designation }),
-      ...(yearsOfExperience !== undefined && { yearsOfExperience }),
-      ...(address && { address }),
-    },
-    { new: true, runValidators: true }
-  );
+  const updateData: any = {
+    ...(name && { name }),
+    updatedAt: new Date()
+  };
 
-  if (!participant) {
-    throw new AppError(404, 'Participant not found');
+  const updatedResults = await db.update(users)
+    .set(updateData)
+    .where(eq(users.id, req.user.id))
+    .returning();
+
+  const user = updatedResults[0];
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
   }
 
-  const response = formatResponse(true, participant, 'Profile updated successfully', 200);
+  const response = formatResponse(true, user, 'Profile updated successfully', 200);
   res.status(200).json(response);
 });
 
@@ -207,134 +236,50 @@ export const changePassword = asyncHandler(async (req: CustomRequest, res: Respo
     throw new AppError(400, 'Password must be at least 6 characters');
   }
 
-  const participant = await Participant.findById(req.user.id).select('+password');
+  const results = await db.select()
+    .from(users)
+    .where(eq(users.id, req.user.id))
+    .limit(1);
 
-  if (!participant) {
-    throw new AppError(404, 'Participant not found');
+  const user = results[0];
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
   }
 
-  if (!participant.password) {
-    throw new AppError(400, 'Password not set for this account');
-  }
-
-  const isPasswordMatch = await comparePassword(currentPassword, participant.password);
+  const isPasswordMatch = await comparePassword(currentPassword, user.password);
 
   if (!isPasswordMatch) {
     throw new AppError(401, 'Current password is incorrect');
   }
 
-  participant.password = await hashPassword(newPassword);
-  await participant.save();
+  const hashedPassword = await hashPassword(newPassword);
+
+  await db.update(users)
+    .set({ password: hashedPassword, updatedAt: new Date() })
+    .where(eq(users.id, req.user.id));
 
   const response = formatResponse(true, null, 'Password changed successfully', 200);
   res.status(200).json(response);
 });
 
 /**
- * Forgot Password - Send OTP
+ * Forgot Password - Send OTP (Placeholder)
  */
 export const forgotPassword = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { email } = req.body;
-
-  if (!email) {
-    throw new AppError(400, 'Email is required');
-  }
-
-  const participant = await Participant.findOne({ email: email.toLowerCase() });
-
-  if (!participant) {
-    throw new AppError(404, 'User with this email does not exist');
-  }
-
-  // Generate 6-digit OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-  participant.otp = otp;
-  participant.otpExpiry = otpExpiry;
-  await participant.save();
-
-  try {
-    await sendOTPEmail(participant.email, otp);
-    
-    const response = formatResponse(true, null, 'OTP sent to your email successfully', 200);
-    res.status(200).json(response);
-  } catch (error) {
-    participant.otp = undefined;
-    participant.otpExpiry = undefined;
-    await participant.save();
-    throw new AppError(500, 'Email could not be sent. Please try again later.');
-  }
+  throw new AppError(501, 'Forgot password functionality is currently being refactored');
 });
 
 /**
- * Verify OTP
+ * Verify OTP (Placeholder)
  */
 export const verifyOTP = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { email, otp } = req.body;
-
-  if (!email || !otp) {
-    throw new AppError(400, 'Email and OTP are required');
-  }
-
-  const participant = await Participant.findOne({
-    email: email.toLowerCase(),
-    otp,
-    otpExpiry: { $gt: new Date() },
-  });
-
-  if (!participant) {
-    throw new AppError(400, 'Invalid or expired OTP');
-  }
-
-  // Generate a temporary reset token to ensure the same user resets the password
-  const resetToken = crypto.randomBytes(32).toString('hex');
-  participant.resetPasswordToken = resetToken;
-  participant.resetPasswordExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-  
-  // Clear OTP
-  participant.otp = undefined;
-  participant.otpExpiry = undefined;
-  await participant.save();
-
-  const response = formatResponse(true, { resetToken }, 'OTP verified successfully', 200);
-  res.status(200).json(response);
+  throw new AppError(501, 'OTP verification is currently being refactored');
 });
 
 /**
- * Reset Password
+ * Reset Password (Placeholder)
  */
 export const resetPassword = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { email, resetToken, newPassword, confirmPassword } = req.body;
-
-  if (!email || !resetToken || !newPassword || !confirmPassword) {
-    throw new AppError(400, 'All fields are required');
-  }
-
-  if (newPassword !== confirmPassword) {
-    throw new AppError(400, 'Passwords do not match');
-  }
-
-  if (newPassword.length < 6) {
-    throw new AppError(400, 'Password must be at least 6 characters');
-  }
-
-  const participant = await Participant.findOne({
-    email: email.toLowerCase(),
-    resetPasswordToken: resetToken,
-    resetPasswordExpiry: { $gt: new Date() },
-  });
-
-  if (!participant) {
-    throw new AppError(400, 'Invalid or expired reset token');
-  }
-
-  participant.password = await hashPassword(newPassword);
-  participant.resetPasswordToken = undefined;
-  participant.resetPasswordExpiry = undefined;
-  await participant.save();
-
-  const response = formatResponse(true, null, 'Password reset successful. You can now login.', 200);
-  res.status(200).json(response);
+  throw new AppError(501, 'Password reset is currently being refactored');
 });
-

@@ -17,13 +17,7 @@ router.get('/:registrationId', registrationController.getRegistrationDetails);
 // Payment
 router.post('/:registrationId/payment', registrationController.processPayment);
 
-// Review and feedback
-router.post('/:registrationId/review', registrationController.submitReview);
-
 // Cancellation
 router.patch('/:registrationId/cancel', registrationController.cancelRegistration);
-
-// Certificate
-router.get('/:registrationId/certificate', registrationController.downloadCertificate);
 
 export default router;

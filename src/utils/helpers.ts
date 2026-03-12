@@ -1,6 +1,9 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import config from '../config/env';
+import { db } from '../db';
+import { courses } from '../db/schema';
+import { desc, like } from 'drizzle-orm';
 
 /**
  * Hash password using bcryptjs
@@ -20,7 +23,7 @@ export const comparePassword = async (password: string, hashedPassword: string):
 /**
  * Generate JWT token
  */
-export const generateToken = (userId: string, role: string): string => {
+export const generateToken = (userId: number, role: string): string => {
   return jwt.sign(
     { id: userId, role },
     config.JWT_SECRET as string,
@@ -28,33 +31,6 @@ export const generateToken = (userId: string, role: string): string => {
       expiresIn: config.JWT_EXPIRY,
     } as any
   );
-};
-
-/**
- * Generate unique course ID
- */
-export const generateCourseId = async (Course: any): Promise<string> => {
-  const prefix = 'CRS';
-  // Sort by courseId descending to get the "latest" ID lexicographically
-  const latestCourse = await Course.findOne().sort({ courseId: -1 });
-
-  let number = 1001;
-  if (latestCourse && latestCourse.courseId) {
-    const lastNumber = parseInt(latestCourse.courseId.replace('CRS', ''), 10);
-    if (!isNaN(lastNumber)) {
-      number = lastNumber + 1;
-    }
-  }
-
-  let courseId = `${prefix}${number}`;
-
-  // Double check to prevent duplicates (handles collisions or out-of-order anomalies)
-  while (await Course.findOne({ courseId })) {
-    number++;
-    courseId = `${prefix}${number}`;
-  }
-
-  return courseId;
 };
 
 /**

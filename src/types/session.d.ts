@@ -3,11 +3,9 @@ import 'express-session';
 declare module 'express-session' {
   interface SessionData {
     cart: {
-      courseId: string;
+      courseId: number;
       courseName: string;
-      price: number;
-      discountedPrice?: number;
-      image?: string;
+      pricing: any;
     }[];
   }
 }

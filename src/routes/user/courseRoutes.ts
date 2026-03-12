@@ -12,6 +12,5 @@ router.get('/', courseController.getAllCourses);
 router.get('/search', courseController.searchCourses);
 router.get('/type/:serviceType', courseController.getCoursesByType);
 router.get('/:courseId', courseController.getCourseDetails);
-router.get('/:courseId/reviews', courseController.getCourseReviews);
 
 export default router;

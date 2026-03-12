@@ -1,9 +1,22 @@
 import { Response } from 'express';
 import { CustomRequest } from '../../types/common';
-import { Registration, Participant, Course } from '../../models';
+import {
+  db,
+  registrations,
+  courseSchedules,
+  courses,
+  users
+} from '../../models';
+import {
+  eq,
+  and,
+  ne,
+  desc,
+  sql,
+  count
+} from 'drizzle-orm';
 import { paginate, formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
-import mongoose from 'mongoose';
 
 /**
  * Register for Course
@@ -13,74 +26,66 @@ export const registerForCourse = asyncHandler(async (req: CustomRequest, res: Re
     throw new AppError(401, 'User not authenticated');
   }
 
-  const { courseId } = req.body;
+  const { courseId } = req.body; // courseId here is the schedule ID
 
   if (!courseId) {
-    throw new AppError(400, 'Course ID is required');
+    throw new AppError(400, 'Course schedule ID is required');
   }
 
-  if (!mongoose.Types.ObjectId.isValid(courseId)) {
-    throw new AppError(400, 'Invalid course ID');
+  const scheduleId = parseInt(courseId as string);
+
+  const scheduleResults = await db.select()
+    .from(courseSchedules)
+    .where(eq(courseSchedules.id, scheduleId))
+    .limit(1);
+
+  if (scheduleResults.length === 0) {
+    throw new AppError(404, 'Course schedule not found');
   }
 
-  const course = await Course.findById(courseId);
+  const schedule = scheduleResults[0];
 
-  if (!course) {
-    throw new AppError(404, 'Course not found');
-  }
-
-  if (!course.isActive) {
+  if (!schedule.isActive) {
     throw new AppError(400, 'Course is not available');
   }
 
-  if (new Date() > course.endDate) {
-    throw new AppError(400, 'Course has already ended');
-  }
+  const existingRegistration = await db.select()
+    .from(registrations)
+    .where(and(
+      eq(registrations.userId, req.user.id),
+      eq(registrations.scheduleId, scheduleId),
+      ne(registrations.status, 'CANCELLED')
+    ))
+    .limit(1);
 
-  const participant = await Participant.findById(req.user.id);
-
-  if (!participant) {
-    throw new AppError(404, 'Participant not found');
-  }
-
-  const existingRegistration = await Registration.findOne({
-    participantId: req.user.id,
-    courseId: courseId,
-    registrationStatus: { $ne: 'CANCELLED' },
-  });
-
-  if (existingRegistration) {
+  if (existingRegistration.length > 0) {
     throw new AppError(400, 'You are already registered for this course');
   }
 
-  const registration = new Registration({
-    participantId: req.user.id,
-    courseId: courseId,
-    originalPrice: course.finalPrice,
-    finalAmount: course.finalPrice,
-    discountApplied: course.discountPercentage,
-    registrationStatus: 'PENDING',
+  // Generate registration number
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const registrationNumber = `REG${timestamp}${random}`;
+
+  const [newReg] = await db.insert(registrations).values({
+    userId: req.user.id,
+    scheduleId: scheduleId,
+    registrationNumber,
+    status: 'PENDING',
     paymentStatus: 'PENDING',
-  });
+  }).returning();
 
-  await registration.save();
-
-  participant.registeredCourses.push({
-    courseId: new mongoose.Types.ObjectId(courseId),
-    registrationId: registration._id,
-    registrationDate: new Date(),
-  });
-
-  course.enrollmentCount = (course.enrollmentCount || 0) + 1;
-  if (course.capacityRemaining) {
-    course.capacityRemaining -= 1;
-  }
-
-  await Promise.all([participant.save(), course.save()]);
+  // Update course schedule (capacity and enrollment)
+  await db.update(courseSchedules)
+    .set({
+      enrollmentCount: sql`${courseSchedules.enrollmentCount} + 1`,
+      capacityRemaining: schedule.capacityRemaining ? sql`${courseSchedules.capacityRemaining} - 1` : undefined
+    })
+    .where(eq(courseSchedules.id, scheduleId));
 
   const response = formatResponse(
     true,
-    registration,
+    newReg,
     'Registration successful. Please proceed to payment.',
     201
   );
@@ -98,29 +103,50 @@ export const getUserRegistrations = asyncHandler(async (req: CustomRequest, res:
 
   const { page = 1, limit = 10, status } = req.query;
 
-  const filters: any = { participantId: req.user.id };
-
-  if (status) {
-    filters.registrationStatus = String(status);
-  }
-
   const { skip, limit: pageLimit, page: pageNum } = paginate(
     parseInt(page as string),
     parseInt(limit as string)
   );
 
-  const registrations = await Registration.find(filters)
-    .populate('courseId', 'courseName courseId serviceType startDate endDate price finalPrice')
-    .skip(skip)
-    .limit(pageLimit)
-    .sort({ createdAt: -1 });
+  const conditions = [eq(registrations.userId, req.user.id)];
+  if (status) {
+    conditions.push(eq(registrations.status, String(status)));
+  }
 
-  const total = await Registration.countDocuments(filters);
+  const whereClause = and(...conditions);
+
+  const results = await db.select({
+    id: registrations.id,
+    registrationNumber: registrations.registrationNumber,
+    status: registrations.status,
+    paymentStatus: registrations.paymentStatus,
+    amountPaid: registrations.amountPaid,
+    currency: registrations.currency,
+    createdAt: registrations.createdAt,
+    courseId: courseSchedules.id,
+    courseName: courses.name,
+    mentor: courseSchedules.mentor,
+    startDate: courseSchedules.startDate,
+    endDate: courseSchedules.endDate,
+  })
+    .from(registrations)
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(whereClause)
+    .limit(pageLimit)
+    .offset(skip)
+    .orderBy(desc(registrations.createdAt));
+
+  const countResults = await db.select({ count: count() })
+    .from(registrations)
+    .where(whereClause);
+
+  const total = Number(countResults[0].count);
 
   const response = formatResponse(
     true,
     {
-      registrations,
+      registrations: results,
       pagination: {
         page: pageNum,
         limit: pageLimit,
@@ -143,24 +169,44 @@ export const getRegistrationDetails = asyncHandler(async (req: CustomRequest, re
     throw new AppError(401, 'User not authenticated');
   }
 
-  const registration = await Registration.findOne({
-    _id: req.params.registrationId,
-    participantId: req.user.id,
-  })
-    .populate('courseId')
-    .populate('participantId', 'name email mobile');
+  const registrationId = parseInt(req.params.registrationId);
 
-  if (!registration) {
+  const results = await db.select({
+    registration: registrations,
+    schedule: courseSchedules,
+    course: courses,
+    user: users
+  })
+    .from(registrations)
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(users, eq(registrations.userId, users.id))
+    .where(and(eq(registrations.id, registrationId), eq(registrations.userId, req.user.id)))
+    .limit(1);
+
+  if (results.length === 0) {
     throw new AppError(404, 'Registration not found');
   }
 
-  const response = formatResponse(
-    true,
-    registration,
-    'Registration details retrieved successfully',
-    200
-  );
+  const { registration, schedule, course, user } = results[0];
+  const combined = {
+    ...registration,
+    courseId: schedule.id,
+    courseName: course.name,
+    mentor: schedule.mentor,
+    startDate: schedule.startDate,
+    endDate: schedule.endDate,
+    batchType: schedule.batchType,
+    courseType: schedule.courseType,
+    pricing: schedule.pricing,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email
+    }
+  };
 
+  const response = formatResponse(true, combined, 'Registration details retrieved successfully', 200);
   res.status(200).json(response);
 });
 
@@ -172,81 +218,44 @@ export const processPayment = asyncHandler(async (req: CustomRequest, res: Respo
     throw new AppError(401, 'User not authenticated');
   }
 
-  const { paymentMode, paymentId, amountPaid } = req.body;
+  const { paymentId, amountPaid, currency = 'INR' } = req.body;
+  const registrationId = parseInt(req.params.registrationId);
 
-  if (!paymentMode || !paymentId || !amountPaid) {
+  if (!paymentId || !amountPaid) {
     throw new AppError(400, 'Payment details are required');
   }
 
-  const registration = await Registration.findOne({
-    _id: req.params.registrationId,
-    participantId: req.user.id,
-  });
+  const results = await db.select().from(registrations).where(and(eq(registrations.id, registrationId), eq(registrations.userId, req.user.id))).limit(1);
 
-  if (!registration) {
+  if (results.length === 0) {
     throw new AppError(404, 'Registration not found');
   }
+
+  const registration = results[0];
 
   if (registration.paymentStatus === 'PAID') {
     throw new AppError(400, 'Payment already processed');
   }
 
-  if (amountPaid < registration.finalAmount) {
-    throw new AppError(400, 'Insufficient payment amount');
-  }
-
-  registration.paymentMode = paymentMode as any;
-  registration.paymentId = paymentId;
-  registration.amountPaid = amountPaid;
-  registration.paymentStatus = 'PAID';
-  registration.registrationStatus = 'CONFIRMED';
-  registration.transactionDate = new Date();
-
-  await registration.save();
+  const [updated] = await db.update(registrations)
+    .set({
+      paymentId,
+      amountPaid: amountPaid.toString(),
+      currency,
+      paymentStatus: 'PAID',
+      status: 'CONFIRMED',
+      transactionDate: new Date(),
+      updatedAt: new Date()
+    })
+    .where(eq(registrations.id, registrationId))
+    .returning();
 
   const response = formatResponse(
     true,
-    registration,
+    updated,
     'Payment processed successfully. Registration confirmed!',
     200
   );
-
-  res.status(200).json(response);
-});
-
-/**
- * Submit Review
- */
-export const submitReview = asyncHandler(async (req: CustomRequest, res: Response) => {
-  if (!req.user) {
-    throw new AppError(401, 'User not authenticated');
-  }
-
-  const { rating, review } = req.body;
-
-  if (!rating || rating < 1 || rating > 5) {
-    throw new AppError(400, 'Rating must be between 1 and 5');
-  }
-
-  const registration = await Registration.findOne({
-    _id: req.params.registrationId,
-    participantId: req.user.id,
-  });
-
-  if (!registration) {
-    throw new AppError(404, 'Registration not found');
-  }
-
-  if (!registration.courseCompleted) {
-    throw new AppError(400, 'You can only review after completing the course');
-  }
-
-  registration.rating = rating;
-  registration.review = review || '';
-
-  await registration.save();
-
-  const response = formatResponse(true, registration, 'Review submitted successfully', 200);
 
   res.status(200).json(response);
 });
@@ -259,79 +268,46 @@ export const cancelRegistration = asyncHandler(async (req: CustomRequest, res: R
     throw new AppError(401, 'User not authenticated');
   }
 
-  const { reason } = req.body;
+  const registrationId = parseInt(req.params.registrationId);
 
-  const registration = await Registration.findOne({
-    _id: req.params.registrationId,
-    participantId: req.user.id,
-  });
+  const results = await db.select()
+    .from(registrations)
+    .where(and(eq(registrations.id, registrationId), eq(registrations.userId, req.user.id)))
+    .limit(1);
 
-  if (!registration) {
+  if (results.length === 0) {
     throw new AppError(404, 'Registration not found');
   }
 
-  if (registration.registrationStatus === 'CANCELLED') {
+  const reg = results[0];
+  if (reg.status === 'CANCELLED') {
     throw new AppError(400, 'Registration is already cancelled');
   }
 
-  const course = await Course.findById(registration.courseId);
-  if (course && new Date() > course.startDate) {
+  const scheduleResults = await db.select().from(courseSchedules).where(eq(courseSchedules.id, reg.scheduleId)).limit(1);
+  const schedule = scheduleResults[0];
+
+  if (schedule && new Date() > new Date(schedule.startDate)) {
     throw new AppError(400, 'Cannot cancel course after it has started');
   }
 
-  registration.registrationStatus = 'CANCELLED';
-  registration.cancellationReason = reason || 'Cancelled by participant';
-  registration.cancellationDate = new Date();
+  await db.update(registrations)
+    .set({
+      status: 'CANCELLED',
+      updatedAt: new Date()
+    })
+    .where(eq(registrations.id, reg.id));
 
-  if (registration.paymentStatus === 'PAID') {
-    registration.paymentStatus = 'REFUNDED';
-  }
-
-  await registration.save();
-
-  await Participant.findByIdAndUpdate(req.user.id, {
-    $pull: { registeredCourses: { registrationId: registration._id } },
-  });
-
-  if (course) {
-    await Course.findByIdAndUpdate(registration.courseId, {
-      $inc: { enrollmentCount: -1 },
-      ...(course.capacityRemaining && { capacityRemaining: course.capacityRemaining + 1 }),
-    });
+  // Update schedule counts
+  if (schedule) {
+    await db.update(courseSchedules)
+      .set({
+        enrollmentCount: sql`${courseSchedules.enrollmentCount} - 1`,
+        capacityRemaining: schedule.capacityRemaining ? sql`${courseSchedules.capacityRemaining} + 1` : undefined
+      })
+      .where(eq(courseSchedules.id, schedule.id));
   }
 
   const response = formatResponse(true, null, 'Registration cancelled successfully', 200);
-
-  res.status(200).json(response);
-});
-
-/**
- * Download Certificate
- */
-export const downloadCertificate = asyncHandler(async (req: CustomRequest, res: Response) => {
-  if (!req.user) {
-    throw new AppError(401, 'User not authenticated');
-  }
-
-  const registration = await Registration.findOne({
-    _id: req.params.registrationId,
-    participantId: req.user.id,
-  });
-
-  if (!registration) {
-    throw new AppError(404, 'Registration not found');
-  }
-
-  if (!registration.certificateIssued) {
-    throw new AppError(400, 'Certificate not yet issued');
-  }
-
-  const response = formatResponse(
-    true,
-    registration.certificate,
-    'Certificate ready for download',
-    200
-  );
-
   res.status(200).json(response);
 });

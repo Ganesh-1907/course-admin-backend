@@ -1,49 +1,83 @@
 import { Response } from 'express';
 import { CustomRequest } from '../../types/common';
-import { Course, Registration } from '../../models';
+import {
+  db,
+  courseSchedules,
+  courses,
+  registrations,
+  users,
+  serviceTypes
+} from '../../models';
+import {
+  eq,
+  and,
+  or,
+  ilike,
+  sql,
+  desc,
+  count,
+} from 'drizzle-orm';
 import { paginate, formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
-import mongoose from 'mongoose';
 
 /**
  * Get All Courses (Public)
  */
 export const getAllCourses = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { page = 1, limit = 10, search, serviceType } = req.query;
-
-  const filters: any = { isActive: true };
-
-  if (search) {
-    const searchStr = String(search);
-    filters.$or = [
-      { courseName: { $regex: searchStr, $options: 'i' } },
-      { mentor: { $regex: searchStr, $options: 'i' } },
-    ];
-  }
-
-  if (serviceType && serviceType !== 'All Types') {
-    filters.serviceType = String(serviceType);
-  }
+  const { page = 1, limit = 25, search, serviceType } = req.query;
 
   const { skip, limit: pageLimit, page: pageNum } = paginate(
     parseInt(page as string),
     parseInt(limit as string)
   );
 
-  const courses = await Course.find(filters)
-    .select(
-      'courseId courseName description mentor serviceType startDate endDate price discountPercentage finalPrice courseImage enrollmentCount'
-    )
-    .skip(skip)
-    .limit(pageLimit)
-    .sort({ startDate: 1 });
+  const conditions = [eq(courseSchedules.isActive, true)];
 
-  const total = await Course.countDocuments(filters);
+  if (search) {
+    const searchStr = `%${search}%`;
+    conditions.push(or(
+      ilike(courses.name, searchStr),
+      ilike(courseSchedules.mentor, searchStr)
+    ));
+  }
+
+  if (serviceType && serviceType !== 'All Types') {
+    conditions.push(ilike(serviceTypes.name, serviceType as string));
+  }
+
+  const whereClause = and(...conditions);
+
+  const results = await db.select({
+    id: courseSchedules.id,
+    courseName: courses.name,
+    description: courses.name, // Usually courses.description but simplified schema has only name
+    mentor: courseSchedules.mentor,
+    serviceType: serviceTypes.name,
+    startDate: courseSchedules.startDate,
+    endDate: courseSchedules.endDate,
+    pricing: courseSchedules.pricing,
+    brochureUrl: courseSchedules.brochureUrl,
+  })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .where(whereClause)
+    .limit(pageLimit)
+    .offset(skip)
+    .orderBy(desc(courseSchedules.startDate));
+
+  const countResults = await db.select({ count: count() })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .where(whereClause);
+
+  const total = Number(countResults[0].count);
 
   const response = formatResponse(
     true,
     {
-      courses,
+      courses: results,
       pagination: {
         page: pageNum,
         limit: pageLimit,
@@ -62,29 +96,49 @@ export const getAllCourses = asyncHandler(async (req: CustomRequest, res: Respon
  * Get Course Details
  */
 export const getCourseDetails = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const course = await Course.findOne({
-    $or: [{ _id: req.params.courseId }, { courseId: req.params.courseId }],
-    isActive: true,
-  }).populate('createdBy', 'name');
+  const courseId = parseInt(req.params.courseId);
 
-  if (!course) {
+  if (isNaN(courseId)) {
+    throw new AppError(400, 'Invalid course ID');
+  }
+
+  const courseResults = await db.select({
+    id: courseSchedules.id,
+    courseName: courses.name,
+    mentor: courseSchedules.mentor,
+    serviceType: serviceTypes.name,
+    startDate: courseSchedules.startDate,
+    endDate: courseSchedules.endDate,
+    pricing: courseSchedules.pricing,
+    address: courseSchedules.address,
+    batchType: courseSchedules.batchType,
+    courseType: courseSchedules.courseType,
+    startTime: courseSchedules.startTime,
+    endTime: courseSchedules.endTime,
+    brochureUrl: courseSchedules.brochureUrl,
+    description: courseSchedules.description,
+    difficultyLevel: courseSchedules.difficultyLevel,
+    duration: courseSchedules.duration,
+  })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .where(and(eq(courseSchedules.isActive, true), eq(courseSchedules.id, courseId)))
+    .limit(1);
+
+  if (courseResults.length === 0) {
     throw new AppError(404, 'Course not found');
   }
 
-  const registrationCount = await Registration.countDocuments({
-    courseId: course._id,
-    registrationStatus: 'CONFIRMED',
-  });
+  const course = courseResults[0];
 
-  const ratingData = await Registration.aggregate([
-    { $match: { courseId: course._id, rating: { $exists: true } } },
-    { $group: { _id: null, avgRating: { $avg: '$rating' } } },
-  ]);
+  const enrollmentCountRes = await db.select({ count: count() })
+    .from(registrations)
+    .where(and(eq(registrations.scheduleId, course.id), eq(registrations.status, 'CONFIRMED')));
 
   const courseData = {
-    ...course.toObject(),
-    registrationCount,
-    avgRating: ratingData.length > 0 ? ratingData[0].avgRating : 0,
+    ...course,
+    enrollmentCount: Number(enrollmentCountRes[0].count),
   };
 
   const response = formatResponse(true, courseData, 'Course details retrieved successfully', 200);
@@ -95,7 +149,7 @@ export const getCourseDetails = asyncHandler(async (req: CustomRequest, res: Res
  * Search Courses
  */
 export const searchCourses = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { q, page = 1, limit = 10 } = req.query;
+  const { q, page = 1, limit = 25 } = req.query;
 
   if (!q || (q as string).trim().length < 2) {
     throw new AppError(400, 'Search query must be at least 2 characters');
@@ -106,34 +160,38 @@ export const searchCourses = asyncHandler(async (req: CustomRequest, res: Respon
     parseInt(limit as string)
   );
 
-  const courses = await Course.find(
-    {
-      $or: [
-        { courseName: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-        { mentor: { $regex: q, $options: 'i' } },
-      ],
-      isActive: true,
-    },
-    'courseId courseName description mentor price finalPrice courseImage'
-  )
-    .skip(skip)
-    .limit(pageLimit);
+  const searchStr = `%${q}%`;
+  const whereClause = and(
+    eq(courseSchedules.isActive, true),
+    or(
+      ilike(courses.name, searchStr),
+      ilike(courseSchedules.mentor, searchStr)
+    )
+  );
 
-  const searchStr = String(q);
-  const total = await Course.countDocuments({
-    $or: [
-      { courseName: { $regex: searchStr, $options: 'i' } },
-      { description: { $regex: searchStr, $options: 'i' } },
-      { mentor: { $regex: searchStr, $options: 'i' } },
-    ],
-    isActive: true,
-  });
+  const results = await db.select({
+    id: courseSchedules.id,
+    courseName: courses.name,
+    mentor: courseSchedules.mentor,
+    pricing: courseSchedules.pricing,
+  })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(whereClause)
+    .limit(pageLimit)
+    .offset(skip);
+
+  const countResults = await db.select({ count: count() })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(whereClause);
+
+  const total = Number(countResults[0].count);
 
   const response = formatResponse(
     true,
     {
-      courses,
+      courses: results,
       query: q,
       pagination: {
         page: pageNum,
@@ -154,42 +212,39 @@ export const searchCourses = asyncHandler(async (req: CustomRequest, res: Respon
  */
 export const getCoursesByType = asyncHandler(async (req: CustomRequest, res: Response) => {
   const { serviceType } = req.params;
-  const { page = 1, limit = 10 } = req.query;
-
-  const validTypes = [
-    'Agile',
-    'Service',
-    'SAFe',
-    'Project',
-    'Quality',
-    'Business',
-    'Generative AI',
-  ];
-
-  if (!validTypes.includes(serviceType)) {
-    throw new AppError(400, 'Invalid service type');
-  }
+  const { page = 1, limit = 25 } = req.query;
 
   const { skip, limit: pageLimit, page: pageNum } = paginate(
     parseInt(page as string),
     parseInt(limit as string)
   );
 
-  const courses = await Course.find({
-    serviceType,
-    isActive: true,
+  const coursesResults = await db.select({
+    id: courseSchedules.id,
+    courseName: courses.name,
+    mentor: courseSchedules.mentor,
+    pricing: courseSchedules.pricing,
   })
-    .select('courseId courseName description mentor price finalPrice courseImage')
-    .skip(skip)
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .where(and(eq(serviceTypes.name, serviceType), eq(courseSchedules.isActive, true)))
     .limit(pageLimit)
-    .sort({ startDate: 1 });
+    .offset(skip)
+    .orderBy(desc(courseSchedules.startDate));
 
-  const total = await Course.countDocuments({ serviceType, isActive: true });
+  const countResults = await db.select({ count: count() })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .where(and(eq(serviceTypes.name, serviceType), eq(courseSchedules.isActive, true)));
+
+  const total = Number(countResults[0].count);
 
   const response = formatResponse(
     true,
     {
-      courses,
+      courses: coursesResults,
       pagination: {
         page: pageNum,
         limit: pageLimit,
@@ -198,70 +253,6 @@ export const getCoursesByType = asyncHandler(async (req: CustomRequest, res: Res
       },
     },
     'Courses retrieved successfully',
-    200
-  );
-
-  res.status(200).json(response);
-});
-
-/**
- * Get Course Reviews
- */
-export const getCourseReviews = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { page = 1, limit = 10 } = req.query;
-
-  const { skip, limit: pageLimit, page: pageNum } = paginate(
-    parseInt(page as string),
-    parseInt(limit as string)
-  );
-
-  const reviews = await Registration.aggregate([
-    {
-      $match: {
-        courseId: new mongoose.Types.ObjectId(req.params.courseId),
-        review: { $exists: true, $ne: null },
-        rating: { $exists: true },
-      },
-    },
-    {
-      $lookup: {
-        from: 'participants',
-        localField: 'participantId',
-        foreignField: '_id',
-        as: 'participant',
-      },
-    },
-    { $unwind: '$participant' },
-    { $sort: { createdAt: -1 } },
-    { $skip: skip },
-    { $limit: pageLimit },
-    {
-      $project: {
-        rating: 1,
-        review: 1,
-        'participant.name': 1,
-        createdAt: 1,
-      },
-    },
-  ]);
-
-  const total = await Registration.countDocuments({
-    courseId: new mongoose.Types.ObjectId(req.params.courseId),
-    review: { $exists: true, $ne: null },
-  });
-
-  const response = formatResponse(
-    true,
-    {
-      reviews,
-      pagination: {
-        page: pageNum,
-        limit: pageLimit,
-        total,
-        pages: Math.ceil(total / pageLimit),
-      },
-    },
-    'Course reviews retrieved successfully',
     200
   );
 

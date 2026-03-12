@@ -1,61 +1,59 @@
-import mongoose from 'mongoose';
-import { Admin } from '../models';
+import { sql } from 'drizzle-orm';
+import { db, users, registrations, courseSchedules, courses, serviceTypes } from '../models';
 import { hashPassword } from '../utils/helpers';
-import config from '../config/env';
 
 const seedAdmins = async () => {
   try {
-    // Connect to MongoDB
-    await mongoose.connect(config.MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
-    } as any);
+    console.log('✓ Starting User/Admin Seeding...');
 
-    console.log('✓ Connected to MongoDB');
+    // Delete only users and related data to avoid wiping unrelated tables
+    await db.execute(sql`TRUNCATE TABLE registrations, users RESTART IDENTITY CASCADE`);
 
-    // Delete existing admins to reseed
-    await Admin.deleteMany({});
-    console.log('✓ Cleared existing admins');
+    console.log('✓ Cleared all existing data');
 
-    // Create admin users with correct schema
-    const adminUsers = [
+    // Create admin users
+    const userList = [
       {
-        name: 'admin.user',
-        email: 'admin.user@gmail.com',
+        name: 'Super Admin',
+        email: 'superadmin@gmail.com',
         password: 'admin@123',
-        phone: '+91-9999999999',
-        department: 'Management',
-        role: 'admin',
-        isActive: true,
+        role: 'super_admin',
+        status: 'ACTIVE',
       },
       {
-        name: 'Admin Two',
-        email: 'admin.two@gmail.com',
+        name: 'Admin User',
+        email: 'admin.user@gmail.com',
         password: 'admin@123',
-        phone: '+91-7816087488',
-        department: 'Operations',
         role: 'admin',
-        isActive: true,
+        status: 'ACTIVE',
+      },
+      {
+        name: 'Participant User',
+        email: 'user@gmail.com',
+        password: 'user@123',
+        role: 'participant',
+        status: 'ACTIVE',
       },
     ];
 
-    const adminsToCreate = await Promise.all(
-      adminUsers.map(async (admin) => {
-        const hashedPassword = await hashPassword(admin.password);
+    const usersToCreate = await Promise.all(
+      userList.map(async (user) => {
+        const hashedPassword = await hashPassword(user.password);
         return {
-          ...admin,
+          ...user,
           password: hashedPassword,
         };
       })
     );
 
-    const createdAdmins = await Admin.insertMany(adminsToCreate);
-    console.log(`✓ Created ${createdAdmins.length} admin user(s):`);
-    createdAdmins.forEach((admin) => {
-      console.log(`  - ${admin.email} (${admin.name})`);
+    const createdUsers = await db.insert(users).values(usersToCreate).returning();
+    console.log(`✓ Created ${createdUsers.length} user(s):`);
+    createdUsers.forEach((user) => {
+      console.log(`  - ${user.email} (${user.role})`);
     });
 
-    await mongoose.connection.close();
-    console.log('✓ Database connection closed');
+    console.log('✓ Seeding completed successfully');
+    process.exit(0);
   } catch (error) {
     console.error('✗ Seed failed:', error instanceof Error ? error.message : error);
     process.exit(1);

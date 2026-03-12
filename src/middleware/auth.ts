@@ -1,8 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import config from '../config/env';
 import { CustomRequest } from '../types/common';
-import { Admin } from '../models';
+import { db, users } from '../models';
+import { eq } from 'drizzle-orm';
 import { AppError } from './errorHandler';
 
 export const verifyToken = (req: CustomRequest, res: Response, next: NextFunction): void => {
@@ -17,7 +18,7 @@ export const verifyToken = (req: CustomRequest, res: Response, next: NextFunctio
     const decoded: any = jwt.verify(token, config.JWT_SECRET);
 
     req.user = {
-      id: decoded.id,
+      id: parseInt(decoded.id, 10),
       role: decoded.role,
     };
 
@@ -40,17 +41,22 @@ export const verifyAdmin = async (
       throw new AppError(401, 'No user found in request');
     }
 
-    const admin = await Admin.findById(req.user.id);
+    const results = await db.select()
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
 
-    if (!admin) {
-      throw new AppError(404, 'Admin not found');
+    const user = results[0];
+
+    if (!user) {
+      throw new AppError(404, 'User not found');
     }
 
-    if (!admin.isActive) {
-      throw new AppError(403, 'Admin account is inactive');
+    if (user.status !== 'ACTIVE') {
+      throw new AppError(403, 'Account is inactive');
     }
 
-    if (admin.role !== 'admin' && admin.role !== 'super_admin') {
+    if (user.role !== 'admin' && user.role !== 'super_admin') {
       throw new AppError(403, 'Insufficient permissions');
     }
 

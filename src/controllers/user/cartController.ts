@@ -1,117 +1,131 @@
-import { Request, Response } from 'express';
-import { asyncHandler, AppError } from '../../middleware/errorHandler';
+import { Response } from 'express';
+import { CustomRequest } from '../../types/common';
+import { db, courseSchedules, courses } from '../../models';
+import { eq, inArray, and } from 'drizzle-orm';
 import { formatResponse } from '../../utils/helpers';
-// import { Course } from '../../models'; // TODO: Uncomment when courses are seeded in DB
+import { AppError, asyncHandler } from '../../middleware/errorHandler';
 
 /**
- * Add item to cart
- *
- * Currently: Accepts dummy data directly from the frontend and stores it in the session.
- * No DB lookup is performed — courses are not yet in the database.
- *
- * TODO: When courses are ready in the DB, uncomment the DB lookup block below
- *       and remove the direct passthrough logic.
+ * Get Cart Items Details
  */
-export const addToCart = asyncHandler(async (req: Request, res: Response) => {
-  const { courseId, courseName, price, discountedPrice, image } = req.body;
+export const getCart = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const cart = req.session.cart || [];
 
-  if (!courseName) {
-    throw new AppError(400, 'courseName is required');
+  if (cart.length === 0) {
+    return res.status(200).json(formatResponse(true, [], 'Cart is empty', 200));
   }
 
-  // -----------------------------------------------------------------
-  // TODO: UNCOMMENT THIS BLOCK WHEN COURSES ARE IN THE DB
-  // -----------------------------------------------------------------
-  // let course = null;
-  //
-  // // Try to find by MongoDB _id first
-  // if (courseId) {
-  //   try {
-  //     course = await Course.findById(courseId);
-  //   } catch (_) {
-  //     // Not a valid ObjectId — will try by name
-  //   }
-  // }
-  //
-  // // Fallback: find by courseName (case-insensitive)
-  // if (!course && courseName) {
-  //   course = await Course.findOne({
-  //     courseName: { $regex: new RegExp(`^${courseName}$`, 'i') },
-  //     isActive: true,
-  //   });
-  // }
-  //
-  // if (!course) {
-  //   throw new AppError(404, 'Course not found in database');
-  // }
-  // -----------------------------------------------------------------
+  const scheduleIds = cart.map(item => typeof item.courseId === 'string' ? parseInt(item.courseId) : item.courseId);
 
-  // Initialize cart if it doesn't exist
+  const results = await db.select({
+    id: courseSchedules.id,
+    courseName: courses.name,
+    mentor: courseSchedules.mentor,
+    startDate: courseSchedules.startDate,
+    endDate: courseSchedules.endDate,
+    pricing: courseSchedules.pricing,
+    brochureUrl: courseSchedules.brochureUrl,
+  })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(and(
+      inArray(courseSchedules.id, scheduleIds),
+      eq(courseSchedules.isActive, true)
+    ));
+
+  const response = formatResponse(true, results, 'Cart details retrieved successfully', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Add To Cart
+ */
+export const addToCart = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { courseId } = req.body; // This is scheduleId
+
+  if (!courseId) {
+    throw new AppError(400, 'Course schedule ID is required');
+  }
+
+  const scheduleId = typeof courseId === 'string' ? parseInt(courseId) : courseId;
+
+  // Fetch course details to store in session
+  const results = await db.select({
+    id: courseSchedules.id,
+    name: courses.name,
+    pricing: courseSchedules.pricing,
+  })
+    .from(courseSchedules)
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(eq(courseSchedules.id, scheduleId))
+    .limit(1);
+
+  if (results.length === 0) {
+    throw new AppError(404, 'Course not found');
+  }
+
+  const schedule = results[0];
+
   if (!req.session.cart) {
     req.session.cart = [];
   }
 
-  // Use courseId if provided, otherwise fall back to courseName as the unique key
-  const cartKey = courseId || courseName;
-
-  // Prevent duplicate entries
-  const existingItem = req.session.cart.find(item => item.courseId === cartKey);
-  if (existingItem) {
-    return res
-      .status(200)
-      .json(formatResponse(true, req.session.cart, 'Course already in cart', 200));
+  const exists = req.session.cart.find(item => item.courseId === scheduleId);
+  if (!exists) {
+    req.session.cart.push({
+      courseId: schedule.id,
+      courseName: schedule.name,
+      pricing: schedule.pricing
+    });
   }
 
-  // Store dummy data directly from the frontend into the session cart
-  req.session.cart.push({
-    courseId: cartKey,
-    courseName,
-    price: price || 0,
-    discountedPrice: discountedPrice || price || 0,
-    image: image || undefined,
-
-    // TODO: Replace the above with DB values when courses are available:
-    // courseId: course._id.toString(),
-    // courseName: course.courseName,
-    // price: course.price,
-    // discountedPrice: course.finalPrice,
-    // image: course.courseImage?.url,
-  });
-
-  res
-    .status(200)
-    .json(formatResponse(true, req.session.cart, 'Course added to cart successfully', 200));
+  const response = formatResponse(true, req.session.cart, 'Course added to cart', 200);
+  res.status(200).json(response);
 });
 
 /**
- * Get cart items
+ * Remove From Cart
  */
-export const getCart = asyncHandler(async (req: Request, res: Response) => {
-  const cart = req.session.cart || [];
-  res.status(200).json(formatResponse(true, cart, 'Cart retrieved successfully', 200));
-});
-
-/**
- * Remove item from cart
- */
-export const removeFromCart = asyncHandler(async (req: Request, res: Response) => {
+export const removeFromCart = asyncHandler(async (req: CustomRequest, res: Response) => {
   const { courseId } = req.params;
 
-  if (!req.session.cart) {
-    return res.status(200).json(formatResponse(true, [], 'Cart is empty', 200));
+  if (!courseId) {
+    throw new AppError(400, 'Course ID is required');
   }
 
-  req.session.cart = req.session.cart.filter(item => item.courseId !== courseId);
+  const scheduleId = parseInt(courseId);
 
-  res
-    .status(200)
-    .json(formatResponse(true, req.session.cart, 'Course removed from cart successfully', 200));
+  if (req.session.cart) {
+    req.session.cart = req.session.cart.filter(item => item.courseId !== scheduleId);
+  }
+
+  const response = formatResponse(true, req.session.cart || [], 'Course removed from cart', 200);
+  res.status(200).json(response);
 });
 
 /**
- * Clear cart
+ * Clear Cart
  */
-export const clearCart = asyncHandler(async (req: Request, res: Response) => {
+export const clearCart = asyncHandler(async (req: CustomRequest, res: Response) => {
   req.session.cart = [];
-  res.status(200).json(formatResponse(true, [], 'Cart cleared successfully', 200));
+  const response = formatResponse(true, [], 'Cart cleared', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Validate Promo Code (Placeholder)
+ */
+export const validatePromoCode = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { code, courseId } = req.body;
+
+  if (!code || !courseId) {
+    throw new AppError(400, 'Promo code and Course ID are required');
+  }
+
+  const response = formatResponse(true, {
+    valid: false,
+    message: 'Invalid or expired promo code'
+  }, 'Promo code validation complete', 200);
+
+  res.status(200).json(response);
 });

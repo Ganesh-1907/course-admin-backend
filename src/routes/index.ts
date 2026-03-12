@@ -2,6 +2,7 @@ import express from 'express';
 import adminAuthRoutes from './admin/authRoutes';
 import adminCourseRoutes from './admin/courseRoutes';
 import adminRegistrationRoutes from './admin/registrationRoutes';
+import adminDashboardRoutes from './admin/dashboardRoutes';
 import userAuthRoutes from './user/authRoutes';
 import userCourseRoutes from './user/courseRoutes';
 import userRegistrationRoutes from './user/registrationRoutes';
@@ -15,6 +16,7 @@ const router = express.Router();
 router.use('/admin/auth', adminAuthRoutes);
 router.use('/admin/courses', adminCourseRoutes);
 router.use('/admin/registrations', adminRegistrationRoutes);
+router.use('/admin/dashboard', adminDashboardRoutes);
 
 /**
  * User Routes

@@ -1,10 +1,25 @@
 import { Response } from 'express';
 import XLSX from 'xlsx';
 import { CustomRequest } from '../../types/common';
-import { Registration, Course, Participant } from '../../models';
+import {
+  db,
+  registrations,
+  courseSchedules,
+  courses,
+  users,
+  serviceTypes
+} from '../../models';
+import {
+  eq,
+  and,
+  or,
+  ilike,
+  sql,
+  desc,
+  count,
+} from 'drizzle-orm';
 import { paginate, formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
-import mongoose from 'mongoose';
 
 /**
  * Get All Registrations
@@ -19,60 +34,74 @@ export const getAllRegistrations = asyncHandler(async (req: CustomRequest, res: 
     search,
   } = req.query;
 
-  const filters: any = {};
-
-  if (courseId) {
-    const courseIdStr = String(courseId);
-    if (mongoose.Types.ObjectId.isValid(courseIdStr)) {
-      filters.courseId = new mongoose.Types.ObjectId(courseIdStr);
-    }
-  }
-
-  if (status) {
-    filters.registrationStatus = { $regex: String(status), $options: 'i' };
-  }
-
-  if (paymentStatus) {
-    filters.paymentStatus = { $regex: String(paymentStatus), $options: 'i' };
-  }
-
-  if (search) {
-    const searchStr = String(search);
-    const participantIds = await Participant.find({
-      $or: [
-        { name: { $regex: searchStr, $options: 'i' } },
-        { email: { $regex: searchStr, $options: 'i' } },
-      ],
-    }).select('_id');
-
-    const courseIds = await Course.find({
-      courseName: { $regex: searchStr, $options: 'i' },
-    }).select('_id');
-
-    filters.$or = [
-      { participantId: { $in: participantIds.map((p) => p._id) } },
-      { courseId: { $in: courseIds.map((c) => c._id) } },
-    ];
-  }
-
   const { skip, limit: pageLimit, page: pageNum } = paginate(
     parseInt(page as string),
     parseInt(limit as string)
   );
 
-  const registrations = await Registration.find(filters)
-    .populate('courseId', 'courseName courseId')
-    .populate('participantId', 'name email mobile')
-    .skip(skip)
-    .limit(pageLimit)
-    .sort({ createdAt: -1 });
+  const conditions = [];
 
-  const total = await Registration.countDocuments(filters);
+  if (courseId) {
+    conditions.push(eq(registrations.scheduleId, parseInt(courseId as string)));
+  }
+
+  if (status) {
+    conditions.push(eq(registrations.status, status as string));
+  }
+
+  if (paymentStatus) {
+    conditions.push(eq(registrations.paymentStatus, paymentStatus as string));
+  }
+
+  if (search) {
+    const searchStr = `%${search}%`;
+    conditions.push(or(
+      ilike(users.name, searchStr),
+      ilike(users.email, searchStr),
+      ilike(courses.name, searchStr)
+    ));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const results = await db.select({
+    id: registrations.id,
+    registrationNumber: registrations.registrationNumber,
+    status: registrations.status,
+    paymentStatus: registrations.paymentStatus,
+    amountPaid: registrations.amountPaid,
+    currency: registrations.currency,
+    createdAt: registrations.createdAt,
+    userId: users.id,
+    userName: users.name,
+    email: users.email,
+    courseId: courseSchedules.id,
+    courseName: courses.name,
+    mentor: courseSchedules.mentor,
+    startDate: courseSchedules.startDate,
+  })
+    .from(registrations)
+    .innerJoin(users, eq(registrations.userId, users.id))
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(whereClause)
+    .limit(pageLimit)
+    .offset(skip)
+    .orderBy(desc(registrations.createdAt));
+
+  const countResults = await db.select({ count: sql<number>`count(*)` })
+    .from(registrations)
+    .innerJoin(users, eq(registrations.userId, users.id))
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(whereClause);
+
+  const total = Number(countResults[0].count);
 
   const response = formatResponse(
     true,
     {
-      registrations,
+      registrations: results,
       pagination: {
         page: pageNum,
         limit: pageLimit,
@@ -91,382 +120,126 @@ export const getAllRegistrations = asyncHandler(async (req: CustomRequest, res: 
  * Get Registration Details
  */
 export const getRegistrationDetail = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const registration = await Registration.findById(req.params.registrationId)
-    .populate('courseId')
-    .populate('participantId');
+  const registrationId = parseInt(req.params.registrationId);
 
-  if (!registration) {
+  const results = await db.select({
+    registration: registrations,
+    user: users,
+    schedule: courseSchedules,
+    course: courses
+  })
+    .from(registrations)
+    .innerJoin(users, eq(registrations.userId, users.id))
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(eq(registrations.id, registrationId))
+    .limit(1);
+
+  if (results.length === 0) {
     throw new AppError(404, 'Registration not found');
   }
 
-  const response = formatResponse(
-    true,
-    registration,
-    'Registration details retrieved successfully',
-    200
-  );
+  const { registration, user, schedule, course } = results[0];
+  const combined = {
+    ...registration,
+    userName: user.name,
+    email: user.email,
+    courseId: schedule.id,
+    courseName: course.name,
+    mentor: schedule.mentor,
+    startDate: schedule.startDate,
+    endDate: schedule.endDate,
+    batchType: schedule.batchType,
+    courseType: schedule.courseType,
+    pricing: schedule.pricing,
+  };
 
+  const response = formatResponse(true, combined, 'Registration details retrieved successfully', 200);
   res.status(200).json(response);
 });
 
 /**
  * Update Registration Status
  */
-export const updateRegistrationStatus = asyncHandler(
-  async (req: CustomRequest, res: Response) => {
-    const { status, notes } = req.body;
+export const updateRegistrationStatus = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { status, notes } = req.body;
+  const registrationId = parseInt(req.params.registrationId);
 
-    if (!status) {
-      throw new AppError(400, 'Status is required');
-    }
-
-    const validStatuses = ['PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED'];
-    if (!validStatuses.includes(status)) {
-      throw new AppError(400, 'Invalid status');
-    }
-
-    const registration = await Registration.findByIdAndUpdate(
-      req.params.registrationId,
-      {
-        registrationStatus: status,
-        ...(notes && { adminNotes: notes }),
-      },
-      { new: true, runValidators: true }
-    );
-
-    if (!registration) {
-      throw new AppError(404, 'Registration not found');
-    }
-
-    const response = formatResponse(
-      true,
-      registration,
-      'Registration status updated successfully',
-      200
-    );
-
-    res.status(200).json(response);
+  if (!status) {
+    throw new AppError(400, 'Status is required');
   }
-);
 
-/**
- * Cancel Registration
- */
-export const cancelUserRegistration = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { reason } = req.body;
+  const updated = await db.update(registrations)
+    .set({
+      status: status,
+      notes: notes,
+      updatedAt: new Date()
+    })
+    .where(eq(registrations.id, registrationId))
+    .returning();
 
-  const registration = await Registration.findById(req.params.registrationId);
-
-  if (!registration) {
+  if (updated.length === 0) {
     throw new AppError(404, 'Registration not found');
   }
 
-  if (registration.registrationStatus === 'CANCELLED') {
-    throw new AppError(400, 'Registration is already cancelled');
-  }
-
-  registration.registrationStatus = 'CANCELLED';
-  registration.cancellationReason = reason || 'Cancelled by admin';
-  registration.cancellationDate = new Date();
-
-  if (registration.paymentStatus === 'PAID') {
-    registration.paymentStatus = 'REFUNDED';
-  }
-
-  await registration.save();
-
-  const response = formatResponse(true, null, 'Registration cancelled successfully', 200);
-
+  const response = formatResponse(true, updated[0], 'Registration status updated successfully', 200);
   res.status(200).json(response);
 });
 
-/**
- * Issue Certificate
- */
-export const issueCertificate = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { certificateUrl, certificateName } = req.body;
-
-  if (!certificateUrl || !certificateName) {
-    throw new AppError(400, 'Certificate URL and name are required');
-  }
-
-  const registration = await Registration.findByIdAndUpdate(
-    req.params.registrationId,
-    {
-      certificateIssued: true,
-      certificate: {
-        url: certificateUrl,
-        fileName: certificateName,
-        issuedDate: new Date(),
-      },
-    },
-    { new: true }
-  );
-
-  if (!registration) {
-    throw new AppError(404, 'Registration not found');
-  }
-
-  const response = formatResponse(
-    true,
-    registration,
-    'Certificate issued successfully',
-    200
-  );
-
-  res.status(200).json(response);
-});
-
-/**
- * Get Payment Details
- */
-export const getPaymentDetails = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const registration = await Registration.findById(req.params.registrationId);
-
-  if (!registration) {
-    throw new AppError(404, 'Registration not found');
-  }
-
-  const paymentDetails = {
-    registrationNumber: registration.registrationNumber,
-    originalPrice: registration.originalPrice,
-    discountApplied: registration.discountApplied,
-    discountType: registration.discountType,
-    finalAmount: registration.finalAmount,
-    amountPaid: registration.amountPaid,
-    paymentMode: registration.paymentMode,
-    paymentStatus: registration.paymentStatus,
-    paymentId: registration.paymentId,
-    transactionDate: registration.transactionDate,
-    currency: registration.currency,
-  };
-
-  const response = formatResponse(
-    true,
-    paymentDetails,
-    'Payment details retrieved successfully',
-    200
-  );
-
-  res.status(200).json(response);
-});
-
-/**
- * Get Dashboard Statistics
- */
-export const getDashboardStats = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { type, startDate, endDate } = req.query;
-
-  // Handle type mapping (genai -> Generative AI)
-  let searchType = type as string;
-  if (searchType === 'genai') {
-    searchType = 'Generative AI';
-  }
-
-  const courseFilters: any = {};
-  if (searchType && searchType !== 'all') {
-    courseFilters.serviceType = { $regex: new RegExp(`^${searchType}$`, 'i') };
-  }
-
-  // Base registration filters (don't restrict to PAID for counts by default, or maybe the user wants that?)
-  // Usually "Total Registrations" should be all. 
-  // But let's keep it consistent: we'll have one set for counts, one for revenue.
-  const baseRegFilters: any = {};
-  if (startDate || endDate) {
-    baseRegFilters.createdAt = {};
-    if (startDate) {
-      baseRegFilters.createdAt.$gte = new Date(startDate as string);
-    }
-    if (endDate) {
-      const end = new Date(endDate as string);
-      end.setHours(23, 59, 59, 999);
-      baseRegFilters.createdAt.$lte = end;
-    }
-  }
-
-  if (searchType && searchType !== 'all') {
-    const filteredCourseIds = await Course.find({
-      serviceType: { $regex: new RegExp(`^${searchType}$`, 'i') },
-    }).select('_id');
-    baseRegFilters.courseId = { $in: filteredCourseIds.map((c) => c._id) };
-  }
-
-  const revenueFilters = { ...baseRegFilters, paymentStatus: 'PAID' };
-
-  // Course counts should respect type but maybe NOT the registration date range?
-  // User says "agile four present... show accordingly". This implies they want the total for that type.
-  const totalCourses = await Course.countDocuments(courseFilters);
-  const activeCourses = await Course.countDocuments({ ...courseFilters, isActive: true });
-
-  const totalRegistrations = await Registration.countDocuments(baseRegFilters);
-  const confirmedRegistrations = await Registration.countDocuments({
-    ...baseRegFilters,
-    registrationStatus: 'CONFIRMED',
-  });
-
-  const revenueData = await Registration.aggregate([
-    { $match: revenueFilters },
-    { $group: { _id: null, totalRevenue: { $sum: '$finalAmount' } } },
-  ]);
-
-  const totalRevenue = revenueData.length > 0 ? revenueData[0].totalRevenue : 0;
-
-  const coursesByType = await Course.aggregate([
-    { $match: courseFilters },
-    {
-      $group: { _id: '$serviceType', value: { $sum: 1 } },
-    },
-    {
-      $project: {
-        _id: 0,
-        name: { $ifNull: ['$_id', 'Other'] },
-        value: 1,
-      },
-    },
-    { $sort: { value: -1, name: 1 } },
-  ]);
-
-  // Participants filtered by type and date (unique participants who registered)
-  const totalParticipants = await Registration.distinct('participantId', baseRegFilters).then(ids => ids.length);
-
-  // Get top 5 courses by registration count in the filtered period
-  const topCourses = await Registration.aggregate([
-    { $match: baseRegFilters },
-    {
-      $group: {
-        _id: '$courseId',
-        count: { $sum: 1 },
-      },
-    },
-    { $sort: { count: -1 } },
-    { $limit: 5 },
-    {
-      $lookup: {
-        from: 'courses',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'courseDetails',
-      },
-    },
-    { $unwind: '$courseDetails' },
-    {
-      $project: {
-        _id: 0,
-        name: '$courseDetails.courseName',
-        id: '$courseDetails.courseId',
-        count: 1,
-      },
-    },
-  ]);
-
-  const stats = {
-    courses: {
-      total: totalCourses,
-      active: activeCourses,
-      inactive: totalCourses - activeCourses,
-    },
-    registrations: {
-      total: totalRegistrations,
-      confirmed: confirmedRegistrations,
-      pending: totalRegistrations - confirmedRegistrations,
-    },
-    payments: {
-      total: totalRegistrations, // Or should this be PAID registrations? Let's stick to base for now.
-      totalRevenue,
-    },
-    participants: {
-      total: totalParticipants,
-    },
-    coursesByType,
-    topCourses,
-  };
-
-  const response = formatResponse(true, stats, 'Dashboard statistics retrieved successfully', 200);
-
-  res.status(200).json(response);
-});
 
 /**
  * Export Registrations to Excel
  */
 export const exportRegistrations = asyncHandler(async (req: CustomRequest, res: Response) => {
   const { startDate, endDate, status, paymentStatus, search, courseId } = req.query;
-
-  const filters: any = {};
-
-  if (courseId) {
-    const courseIdStr = String(courseId);
-    if (mongoose.Types.ObjectId.isValid(courseIdStr)) {
-      filters.courseId = new mongoose.Types.ObjectId(courseIdStr);
-    }
-  }
-
-  if (status) {
-    filters.registrationStatus = { $regex: String(status), $options: 'i' };
-  }
-
-  if (paymentStatus) {
-    filters.paymentStatus = { $regex: String(paymentStatus), $options: 'i' };
-  }
-
-  if (startDate || endDate) {
-    filters.createdAt = {};
-    if (startDate) {
-      const start = new Date(String(startDate));
-      if (!isNaN(start.getTime())) {
-        filters.createdAt.$gte = start;
-      }
-    }
-    if (endDate) {
-      const end = new Date(String(endDate));
-      if (!isNaN(end.getTime())) {
-        end.setHours(23, 59, 59, 999);
-        filters.createdAt.$lte = end;
-      }
-    }
-  }
+  const conditions = [];
+  if (courseId) conditions.push(eq(registrations.scheduleId, parseInt(courseId as string)));
+  if (status) conditions.push(eq(registrations.status, status as string));
+  if (paymentStatus) conditions.push(eq(registrations.paymentStatus, paymentStatus as string));
+  if (startDate) conditions.push(sql`${registrations.createdAt} >= ${new Date(startDate as string)}`);
+  if (endDate) conditions.push(sql`${registrations.createdAt} <= ${new Date(endDate as string)}`);
 
   if (search) {
-    const searchStr = String(search);
-    const participantIds = await Participant.find({
-      $or: [
-        { name: { $regex: searchStr, $options: 'i' } },
-        { email: { $regex: searchStr, $options: 'i' } },
-      ],
-    }).select('_id');
-
-    const courseIds = await Course.find({
-      courseName: { $regex: searchStr, $options: 'i' },
-    }).select('_id');
-
-    filters.$or = [
-      { participantId: { $in: participantIds.map((p) => p._id) } },
-      { courseId: { $in: courseIds.map((c) => c._id) } },
-    ];
+    const searchStr = `%${search}%`;
+    conditions.push(or(
+      ilike(users.name, searchStr),
+      ilike(users.email, searchStr),
+      ilike(courses.name, searchStr)
+    ));
   }
 
-  const registrations = await Registration.find(filters)
-    .populate('courseId', 'courseName courseId serviceType')
-    .populate('participantId', 'name email mobile organization designation')
-    .sort({ createdAt: -1 });
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const data = registrations.map((reg: any) => ({
+  const results = await db.select({
+    registrationNumber: registrations.registrationNumber,
+    userName: users.name,
+    email: users.email,
+    courseName: courses.name,
+    status: registrations.status,
+    paymentStatus: registrations.paymentStatus,
+    amountPaid: registrations.amountPaid,
+    currency: registrations.currency,
+    paymentId: registrations.paymentId,
+    createdAt: registrations.createdAt
+  })
+    .from(registrations)
+    .innerJoin(users, eq(registrations.userId, users.id))
+    .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .where(whereClause)
+    .orderBy(desc(registrations.createdAt));
+
+  const data = results.map(reg => ({
     'Registration ID': reg.registrationNumber,
-    'Participant Name': reg.participantId?.name || 'N/A',
-    'Email': reg.participantId?.email || 'N/A',
-    'Mobile': reg.participantId?.mobile || 'N/A',
-    'Course Name': reg.courseId?.courseName || 'N/A',
-    'Course ID': reg.courseId?.courseId || 'N/A',
-    'Service Type': reg.courseId?.serviceType || 'N/A',
-    'Registration Status': reg.registrationStatus,
+    'User Name': reg.userName,
+    'Email': reg.email,
+    'Course Name': reg.courseName,
+    'Status': reg.status,
     'Payment Status': reg.paymentStatus,
     'Amount Paid': reg.amountPaid,
-    'Total Amount': reg.finalAmount,
     'Currency': reg.currency,
-    'Payment Mode': reg.paymentMode || 'N/A',
-    'Payment ID': reg.paymentId || 'N/A',
+    'Payment ID': reg.paymentId,
     'Registration Date': reg.createdAt ? new Date(reg.createdAt).toLocaleDateString() : 'N/A',
-    'Cancellation Reason': reg.cancellationReason || 'N/A',
   }));
 
   const workbook = XLSX.utils.book_new();
@@ -478,4 +251,31 @@ export const exportRegistrations = asyncHandler(async (req: CustomRequest, res: 
   res.setHeader('Content-Disposition', 'attachment; filename=Registrations.xlsx');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.send(excelBuffer);
+});
+
+/**
+ * Get Payment Details
+ */
+export const getPaymentDetails = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const registrationId = parseInt(req.params.registrationId);
+
+  const results = await db.select().from(registrations).where(eq(registrations.id, registrationId)).limit(1);
+
+  if (results.length === 0) {
+    throw new AppError(404, 'Registration not found');
+  }
+
+  const reg = results[0];
+
+  const paymentDetails = {
+    registrationNumber: reg.registrationNumber,
+    amountPaid: reg.amountPaid,
+    paymentStatus: reg.paymentStatus,
+    paymentId: reg.paymentId,
+    transactionDate: reg.transactionDate,
+    currency: reg.currency,
+  };
+
+  const response = formatResponse(true, paymentDetails, 'Payment details retrieved successfully', 200);
+  res.status(200).json(response);
 });

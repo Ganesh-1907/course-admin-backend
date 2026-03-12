@@ -16,11 +16,11 @@ router.use(verifyToken, verifyAdmin); // Apply middleware to all routes below
 router.post('/', uploadBrochure.single('brochure'), courseController.createCourse);
 router.get('/', courseController.getAllCourses);
 router.post('/import', upload.single('file'), courseController.importCourses);
+// Course actions
+router.get('/service-types', courseController.getAllServiceTypes);
 router.get('/:courseId', courseController.getCourseById);
 router.put('/:courseId', uploadBrochure.single('brochure'), courseController.updateCourse);
 router.delete('/:courseId', courseController.deleteCourse);
-
-// Course actions
 router.patch('/:courseId/activate', courseController.activateCourse);
 router.patch('/:courseId/deactivate', courseController.deactivateCourse);
 

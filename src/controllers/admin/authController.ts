@@ -1,11 +1,11 @@
 import { Response } from 'express';
-import { CustomRequest, ApiResponse } from '../../types/common';
-import { Admin } from '../../models';
+import { CustomRequest } from '../../types/common';
+import { db, users } from '../../models';
+import { eq, sql } from 'drizzle-orm';
 import {
   generateToken,
   hashPassword,
   comparePassword,
-  validateEmail,
   formatResponse,
 } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
@@ -20,36 +20,42 @@ export const adminLogin = asyncHandler(async (req: CustomRequest, res: Response)
     throw new AppError(400, 'Email and password are required');
   }
 
-  const admin = await Admin.findOne({ email: email.toLowerCase() }).select('+password');
+  const results = await db.select()
+    .from(users)
+    .where(eq(sql`LOWER(${users.email})`, email.toLowerCase()))
+    .limit(1);
 
-  if (!admin) {
+  const user = results[0];
+
+  if (!user) {
     throw new AppError(401, 'Invalid email or password');
   }
 
-  if (!admin.isActive) {
-    throw new AppError(403, 'Admin account is inactive');
+  if (user.role !== 'admin' && user.role !== 'super_admin') {
+    throw new AppError(403, 'Insufficient permissions');
   }
 
-  const isPasswordMatch = await comparePassword(password, admin.password);
+  if (user.status !== 'ACTIVE') {
+    throw new AppError(403, 'Account is inactive');
+  }
+
+  const isPasswordMatch = await comparePassword(password, user.password);
 
   if (!isPasswordMatch) {
     throw new AppError(401, 'Invalid email or password');
   }
 
-  admin.lastLogin = new Date();
-  await admin.save();
-
-  const token = generateToken(admin._id.toString(), admin.role);
+  const token = generateToken(user.id, user.role || 'admin');
 
   const response = formatResponse(
     true,
     {
       token,
-      admin: {
-        _id: admin._id,
-        name: admin.name,
-        email: admin.email,
-        role: admin.role,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
       },
     },
     'Login successful',
@@ -60,7 +66,7 @@ export const adminLogin = asyncHandler(async (req: CustomRequest, res: Response)
 });
 
 /**
- * Admin Logout
+ * Admin Logout (No change needed logically)
  */
 export const adminLogout = asyncHandler(async (req: CustomRequest, res: Response) => {
   const response = formatResponse(true, null, 'Logout successful', 200);
@@ -75,13 +81,21 @@ export const getProfile = asyncHandler(async (req: CustomRequest, res: Response)
     throw new AppError(401, 'User not authenticated');
   }
 
-  const admin = await Admin.findById(req.user.id);
+  const results = await db.select()
+    .from(users)
+    .where(eq(users.id, req.user.id as unknown as number))
+    .limit(1);
 
-  if (!admin) {
-    throw new AppError(404, 'Admin not found');
+  const user = results[0];
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
   }
 
-  const response = formatResponse(true, admin, 'Profile retrieved successfully', 200);
+  // Omit password from response
+  const { password, ...userData } = user;
+
+  const response = formatResponse(true, userData, 'Profile retrieved successfully', 200);
   res.status(200).json(response);
 });
 
@@ -93,23 +107,26 @@ export const updateProfile = asyncHandler(async (req: CustomRequest, res: Respon
     throw new AppError(401, 'User not authenticated');
   }
 
-  const { name, phone, department } = req.body;
+  const { name } = req.body;
 
-  const admin = await Admin.findByIdAndUpdate(
-    req.user.id,
-    {
-      ...(name && { name }),
-      ...(phone && { phone }),
-      ...(department && { department }),
-    },
-    { new: true, runValidators: true }
-  );
+  const updateData: any = {};
+  if (name) updateData.name = name;
+  updateData.updatedAt = new Date();
 
-  if (!admin) {
-    throw new AppError(404, 'Admin not found');
+  const updatedResults = await db.update(users)
+    .set(updateData)
+    .where(eq(users.id, req.user.id as unknown as number))
+    .returning();
+
+  const user = updatedResults[0];
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
   }
 
-  const response = formatResponse(true, admin, 'Profile updated successfully', 200);
+  const { password, ...userData } = user;
+
+  const response = formatResponse(true, userData, 'Profile updated successfully', 200);
   res.status(200).json(response);
 });
 
@@ -135,20 +152,28 @@ export const changePassword = asyncHandler(async (req: CustomRequest, res: Respo
     throw new AppError(400, 'Password must be at least 6 characters');
   }
 
-  const admin = await Admin.findById(req.user.id).select('+password');
+  const results = await db.select()
+    .from(users)
+    .where(eq(users.id, req.user.id as unknown as number))
+    .limit(1);
 
-  if (!admin) {
-    throw new AppError(404, 'Admin not found');
+  const user = results[0];
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
   }
 
-  const isPasswordMatch = await comparePassword(currentPassword, admin.password);
+  const isPasswordMatch = await comparePassword(currentPassword, user.password);
 
   if (!isPasswordMatch) {
     throw new AppError(401, 'Current password is incorrect');
   }
 
-  admin.password = await hashPassword(newPassword);
-  await admin.save();
+  const hashedPassword = await hashPassword(newPassword);
+
+  await db.update(users)
+    .set({ password: hashedPassword, updatedAt: new Date() })
+    .where(eq(users.id, req.user.id as unknown as number));
 
   const response = formatResponse(true, null, 'Password changed successfully', 200);
   res.status(200).json(response);

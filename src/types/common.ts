@@ -9,7 +9,7 @@ export interface ApiResponse<T = any> {
 // Request user info from JWT
 export interface AuthRequest {
   user?: {
-    id: string;
+    id: number;
     role: string;
   };
 }
@@ -19,14 +19,14 @@ import { Request } from 'express';
 
 export interface CustomRequest extends Request {
   user?: {
-    id: string;
+    id: number;
     role: string;
   };
   file?: Express.Multer.File;
   activityAction?: string;
   activityDescription?: string;
   entityType?: string;
-  entityId?: string;
+  entityId?: number;
   entityName?: string;
 }
 

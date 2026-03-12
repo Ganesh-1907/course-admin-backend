@@ -1,6 +1,5 @@
-import mongoose from 'mongoose';
-import { connectDB } from '../config/database';
-import { Course, Participant, Registration } from '../models';
+import { db, courseSchedules, courses, users, registrations } from '../models';
+import { eq, inArray, and, count } from 'drizzle-orm';
 
 // Realistic Indian Names
 const firstNames = [
@@ -19,112 +18,103 @@ const generateName = () => {
     return `${first} ${last}`;
 };
 
-const generateMobile = () => {
-    return '9' + Math.floor(Math.random() * 1000000000).toString().padStart(9, '0');
-};
-
 const generateDate = (start: Date, end: Date) => {
     return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
 };
 
 const seedRegistrations = async () => {
     try {
-        await connectDB();
-        console.log('Connected to DB');
+        console.log('✓ Starting Registration Seeding...');
 
-        // 1. Find all active courses
-        const courses = await Course.find({ isActive: true });
-        if (courses.length === 0) {
+        // 1. Find all active schedules
+        const schedules = await db.select()
+            .from(courseSchedules)
+            .where(eq(courseSchedules.isActive, true));
+
+        if (schedules.length === 0) {
             console.error('No active courses found. Please create a course first.');
             process.exit(1);
         }
-        console.log(`Found ${courses.length} active courses.`);
+        console.log(`Found ${schedules.length} active course schedules.`);
 
         const registrationsToCreate = 30;
-        const statuses = ['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'];
-        const paymentModes = ['UPI', 'Card', 'NetBanking', 'Wallet'];
+        const statuses = ['PENDING', 'CONFIRMED', 'CANCELLED'];
 
         const startDate = new Date();
         startDate.setMonth(startDate.getMonth() - 3); // Last 3 months
 
         for (let i = 1; i <= registrationsToCreate; i++) {
-            // Pick random course
-            const course = courses[Math.floor(Math.random() * courses.length)];
+            // Pick random schedule
+            const schedule = schedules[Math.floor(Math.random() * schedules.length)];
 
             const timestamp = Date.now();
             const statusIndex = Math.floor(Math.random() * statuses.length);
             const regStatus = statuses[statusIndex];
 
-            // Logic: Confirmed/Completed -> Paid. Pending -> Pending. Cancelled -> Refunded or Pending.
+            // Logic: Confirmed -> Paid. Pending -> Pending. Cancelled -> Refunded or Pending.
             let payStatus = 'PENDING';
-            if (regStatus === 'CONFIRMED' || regStatus === 'COMPLETED') payStatus = 'PAID';
+            if (regStatus === 'CONFIRMED') payStatus = 'PAID';
             else if (regStatus === 'CANCELLED') payStatus = Math.random() > 0.5 ? 'REFUNDED' : 'PENDING';
 
             const participantName = generateName();
-            const participantEmail = `${participantName.toLowerCase().replace(' ', '.')}.${timestamp}@example.com`;
+            const participantEmail = `${participantName.toLowerCase().replace(' ', '.')}.${timestamp}.${i}@example.com`;
 
-            // 3. Create Participant
-            const participant = await Participant.create({
+            // 3. Create User (Participant)
+            const [user] = await db.insert(users).values({
                 name: participantName,
                 email: participantEmail,
-                mobile: generateMobile(),
+                password: 'password123',
+                role: 'participant',
                 status: 'ACTIVE',
-                emailVerified: true,
-                organization: Math.random() > 0.7 ? 'Tech Corp' : undefined,
-                designation: Math.random() > 0.7 ? 'Developer' : undefined
-            });
+            }).returning();
 
             const regDate = generateDate(startDate, new Date());
-            // For completed courses, date should be older
 
-            const amount = course.finalPrice || course.price;
+            // Pick a random pricing from the schedule
+            const pricingList = schedule.pricing as any[];
+            const selectedPricing = pricingList[Math.floor(Math.random() * pricingList.length)];
+            const amount = selectedPricing.finalPrice || selectedPricing.price;
+            const currency = selectedPricing.currency;
 
             // 4. Create Registration
-            const registration = await Registration.create({
-                participantId: participant._id,
-                courseId: course._id,
-                originalPrice: course.price,
-                finalAmount: amount,
-                discountApplied: course.discountPercentage || 0,
-                registrationStatus: regStatus,
+            const [registration] = await db.insert(registrations).values({
+                userId: user.id,
+                scheduleId: schedule.id,
+                status: regStatus,
                 paymentStatus: payStatus,
-                currency: 'INR',
+                currency: currency,
                 registrationNumber: `REG-${regDate.getTime().toString().slice(-8)}-${i}`,
-                amountPaid: payStatus === 'PAID' ? amount : 0,
+                amountPaid: payStatus === 'PAID' ? amount.toString() : '0',
                 transactionDate: payStatus === 'PAID' ? regDate : undefined,
-                paymentMode: payStatus === 'PAID' ? paymentModes[Math.floor(Math.random() * paymentModes.length)] : undefined,
                 paymentId: payStatus === 'PAID' ? `pay_${Math.random().toString(36).substring(7)}` : undefined,
                 createdAt: regDate,
                 updatedAt: regDate,
-                attendacePercentage: regStatus === 'COMPLETED' ? 100 : 0
-            });
+            }).returning();
 
-            // 5. Update Participant Course List
-            participant.registeredCourses.push({
-                courseId: course._id as mongoose.Types.ObjectId,
-                registrationId: registration._id as mongoose.Types.ObjectId,
-                registrationDate: regDate
-            });
-            await participant.save();
-
-            console.log(`[${i}/${registrationsToCreate}] Created ${regStatus} registration for ${participant.name} in ${course.courseName}`);
+            console.log(`[${i}/${registrationsToCreate}] Created ${regStatus} registration for ${user.name}`);
         }
 
         // Update enrollment counts
-        for (const course of courses) {
-            const count = await Registration.countDocuments({
-                courseId: course._id,
-                registrationStatus: { $in: ['CONFIRMED', 'COMPLETED', 'PENDING'] }
-            });
-            course.enrollmentCount = count;
-            await course.save();
+        console.log('✓ Updating enrollment counts...');
+        for (const schedule of schedules) {
+            const result = await db.select({ count: count() })
+                .from(registrations)
+                .where(and(
+                    eq(registrations.scheduleId, schedule.id),
+                    inArray(registrations.status, ['CONFIRMED', 'PENDING'])
+                ));
+
+            const enrollmentCount = Number(result[0].count);
+            await db.update(courseSchedules)
+                .set({ enrollmentCount })
+                .where(eq(courseSchedules.id, schedule.id));
         }
 
-        console.log('Seeding complete.');
+        console.log('✓ Seeding complete.');
         process.exit(0);
 
     } catch (error) {
-        console.error('Seeding failed:', error);
+        console.error('✗ Seeding failed:', error);
         process.exit(1);
     }
 };
