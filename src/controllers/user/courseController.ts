@@ -20,6 +20,36 @@ import {
 import { paginate, formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
 
+const formatScheduleDate = (startDate: string, endDate: string) => {
+  const s = new Date(startDate);
+  const e = new Date(endDate);
+
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: '2-digit' };
+  const startStr = s.toLocaleDateString('en-US', options);
+
+  const endOptions: Intl.DateTimeFormatOptions = { month: 'short', day: '2-digit', year: 'numeric' };
+  const endStr = e.toLocaleDateString('en-US', endOptions);
+
+  if (s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()) {
+    return `${startStr} - ${e.toLocaleDateString('en-US', { day: '2-digit' })}, ${e.getFullYear()}`;
+  }
+  return `${startStr} - ${endStr}`;
+};
+
+const formatScheduleTime = (startTime: string | null, endTime: string | null) => {
+  if (!startTime || !endTime) return 'Flexible Timing';
+
+  const formatTime = (timeStr: string) => {
+    const [hours, minutes] = timeStr.split(':');
+    const h = parseInt(hours);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `${h12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+  };
+
+  return `${formatTime(startTime)} - ${formatTime(endTime)} IST`;
+};
+
 /**
  * Get All Courses (Public)
  */
@@ -256,5 +286,138 @@ export const getCoursesByType = asyncHandler(async (req: CustomRequest, res: Res
     200
   );
 
+  res.status(200).json(response);
+});
+
+/**
+ * Get Recent Schedule by Course Name (Public)
+ */
+export const getRecentScheduleByCourseName = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { courseName } = req.query;
+
+  if (!courseName) {
+    throw new AppError(400, 'Course name is required');
+  }
+
+  // Find the course by name (fuzzy match)
+  const courseResults = await db.select()
+    .from(courses)
+    .where(ilike(courses.name, `%${courseName}%`))
+    .limit(1);
+
+  if (courseResults.length === 0) {
+    return res.status(200).json(formatResponse(true, null, 'Course not found', 200));
+  }
+
+  const course = courseResults[0];
+
+  // Find the most recent active schedule
+  const today = new Date().toISOString().split('T')[0];
+  const schedules = await db.select()
+    .from(courseSchedules)
+    .where(and(
+      eq(courseSchedules.courseId, course.id),
+      eq(courseSchedules.isActive, true),
+      sql`${courseSchedules.startDate} >= ${today}`
+    ))
+    .orderBy(courseSchedules.startDate)
+    .limit(1);
+
+  if (schedules.length === 0) {
+    return res.status(200).json(formatResponse(true, null, 'No active schedules found', 200));
+  }
+
+  const schedule = schedules[0];
+  const pricing = (schedule.pricing as any[]) || [];
+  const indiaPricing = pricing.find(p => p.country === 'India' || p.currency === 'INR') || pricing[0] || {};
+
+  const formattedSchedule = {
+    courseCode: (course.name || '').split(' ').map((word: string) => word[0]).join('').substring(0, 3).toUpperCase(),
+    courseName: course.name,
+    dateRange: formatScheduleDate(schedule.startDate, schedule.endDate),
+    timeRange: formatScheduleTime(schedule.startTime, schedule.endTime),
+    trainerName: schedule.mentor,
+    trainerImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100', // Default image
+    originalPrice: `${indiaPricing.currency || 'INR'} ${indiaPricing.price?.toLocaleString() || '0'}`,
+    discountedPrice: `${indiaPricing.currency || 'INR'} ${indiaPricing.finalPrice?.toLocaleString() || '0'}`,
+    discountPercentage: indiaPricing.discountPercentage?.toString() || '0',
+    scheduleId: schedule.id,
+    courseId: course.id
+  };
+
+  const response = formatResponse(true, formattedSchedule, 'Recent schedule retrieved successfully', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Get All Schedules by Course Name (Public)
+ */
+export const getAllSchedulesByCourseName = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { courseName } = req.query;
+
+  if (!courseName) {
+    throw new AppError(400, 'Course name is required');
+  }
+
+  // Find the course (fuzzy match)
+  const courseResults = await db.select()
+    .from(courses)
+    .where(ilike(courses.name, `%${courseName}%`))
+    .limit(1);
+
+  if (courseResults.length === 0) {
+    return res.status(200).json(formatResponse(true, { schedules: [], course: null }, 'Course not found', 200));
+  }
+
+  const course = courseResults[0];
+
+  // Find all active schedules from today onwards
+  const today = new Date().toISOString().split('T')[0];
+  const schedules = await db.select()
+    .from(courseSchedules)
+    .where(and(
+      eq(courseSchedules.courseId, course.id),
+      eq(courseSchedules.isActive, true),
+      sql`${courseSchedules.startDate} >= ${today}`
+    ))
+    .orderBy(courseSchedules.startDate);
+
+  const formattedSchedules = schedules.map(schedule => {
+    const pricing = (schedule.pricing as any[]) || [];
+    const indiaPricing = pricing.find(p => p.country === 'India' || p.currency === 'INR') || pricing[0] || {};
+
+    return {
+      id: schedule.id,
+      dateRange: formatScheduleDate(schedule.startDate, schedule.endDate),
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
+      timeRange: formatScheduleTime(schedule.startTime, schedule.endTime),
+      startTime: schedule.startTime,
+      endTime: schedule.endTime,
+      trainerName: schedule.mentor,
+      trainerImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100',
+      originalPrice: indiaPricing.price || 0,
+      discountedPrice: indiaPricing.finalPrice || 0,
+      currency: indiaPricing.currency || 'INR',
+      discountPercentage: indiaPricing.discountPercentage || 0,
+      batchType: schedule.batchType,
+      courseType: schedule.courseType,
+      language: schedule.language,
+      capacityRemaining: schedule.capacityRemaining
+    };
+  });
+
+  const response = formatResponse(
+    true,
+    {
+      schedules: formattedSchedules,
+      course: {
+        id: course.id,
+        name: course.name
+      }
+    },
+    'Schedules retrieved successfully',
+    200
+  );
   res.status(200).json(response);
 });
