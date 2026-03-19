@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { CustomRequest } from '../../types/common';
+import config from '../../config/env';
 import {
   db,
   courseSchedules,
@@ -48,6 +49,46 @@ const formatScheduleTime = (startTime: string | null, endTime: string | null) =>
   };
 
   return `${formatTime(startTime)} - ${formatTime(endTime)} IST`;
+};
+
+const getCountryRegion = (req: any): string => {
+  // 0. Debug/Manual Override: allow region via query parameter
+  const queryRegion = req.query.region as string;
+  if (queryRegion) {
+    console.log(`[GEO] Using query override region: ${queryRegion}`);
+    // Support either full name (India) or code (IN)
+    return queryRegion.length <= 3 ? mapCodeToRegion(queryRegion) : queryRegion;
+  }
+
+  // 1. Primary: Cloudflare header (only available in production behind Cloudflare)
+  const cfCountry = req.headers['cf-ipcountry'] as string;
+  if (cfCountry && cfCountry !== 'XX') {
+    console.log(`[GEO] Using Cloudflare country: ${cfCountry}`);
+    return mapCodeToRegion(cfCountry);
+  }
+
+  // 2. Fallback: Localhost/Development — always default to India
+  //    because Cloudflare is not present on localhost
+  //    In production, Cloudflare header will always be present
+  console.log(`[GEO] No Cloudflare header found. Defaulting to India (dev/localhost fallback).`);
+  return 'India';
+};
+
+const mapCodeToRegion = (code: string): string => {
+  const upperCode = code.toUpperCase();
+  const mapping: Record<string, string> = {
+    'IN': 'India',
+    'US': 'USA',
+    'CA': 'Canada',
+    'AU': 'Australia',
+    'SG': 'Singapore',
+    // European countries
+    'GB': 'Europe', 'DE': 'Europe', 'FR': 'Europe', 'IT': 'Europe', 'ES': 'Europe',
+    'NL': 'Europe', 'BE': 'Europe', 'SE': 'Europe', 'NO': 'Europe', 'DK': 'Europe',
+    'FI': 'Europe', 'IE': 'Europe', 'CH': 'Europe', 'AT': 'Europe', 'PT': 'Europe',
+    'GR': 'Europe', 'PL': 'Europe'
+  };
+  return mapping[upperCode] || 'USA';
 };
 
 /**
@@ -329,7 +370,11 @@ export const getRecentScheduleByCourseName = asyncHandler(async (req: CustomRequ
 
   const schedule = schedules[0];
   const pricing = (schedule.pricing as any[]) || [];
-  const indiaPricing = pricing.find(p => p.country === 'India' || p.currency === 'INR') || pricing[0] || {};
+
+  // Get country region from request
+  const region = getCountryRegion(req);
+
+  const regionPricing = pricing.find(p => p.country === region) || pricing.find(p => p.country === 'USA') || pricing[0] || {};
 
   const formattedSchedule = {
     courseCode: (course.name || '').split(' ').map((word: string) => word[0]).join('').substring(0, 3).toUpperCase(),
@@ -338,14 +383,14 @@ export const getRecentScheduleByCourseName = asyncHandler(async (req: CustomRequ
     timeRange: formatScheduleTime(schedule.startTime, schedule.endTime),
     trainerName: schedule.mentor,
     trainerImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100', // Default image
-    originalPrice: `${indiaPricing.currency || 'INR'} ${indiaPricing.price?.toLocaleString() || '0'}`,
-    discountedPrice: `${indiaPricing.currency || 'INR'} ${indiaPricing.finalPrice?.toLocaleString() || '0'}`,
-    discountPercentage: indiaPricing.discountPercentage?.toString() || '0',
+    originalPrice: `${regionPricing.currency || 'INR'} ${regionPricing.price?.toLocaleString() || '0'}`,
+    discountedPrice: `${regionPricing.currency || 'INR'} ${regionPricing.finalPrice?.toLocaleString() || '0'}`,
+    discountPercentage: regionPricing.discountPercentage?.toString() || '0',
     scheduleId: schedule.id,
     courseId: course.id
   };
 
-  const response = formatResponse(true, formattedSchedule, 'Recent schedule retrieved successfully', 200);
+  const response = formatResponse(true, { ...formattedSchedule, debug: { region, ip: req.ip } }, 'Recent schedule retrieved successfully', 200);
   res.status(200).json(response);
 });
 
@@ -382,9 +427,13 @@ export const getAllSchedulesByCourseName = asyncHandler(async (req: CustomReques
     ))
     .orderBy(courseSchedules.startDate);
 
+  // Get country region from request
+  const region = getCountryRegion(req);
+
   const formattedSchedules = schedules.map(schedule => {
     const pricing = (schedule.pricing as any[]) || [];
-    const indiaPricing = pricing.find(p => p.country === 'India' || p.currency === 'INR') || pricing[0] || {};
+
+    const regionPricing = pricing.find(p => p.country === region) || pricing.find(p => p.country === 'USA') || pricing[0] || {};
 
     return {
       id: schedule.id,
@@ -396,10 +445,10 @@ export const getAllSchedulesByCourseName = asyncHandler(async (req: CustomReques
       endTime: schedule.endTime,
       trainerName: schedule.mentor,
       trainerImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100',
-      originalPrice: indiaPricing.price || 0,
-      discountedPrice: indiaPricing.finalPrice || 0,
-      currency: indiaPricing.currency || 'INR',
-      discountPercentage: indiaPricing.discountPercentage || 0,
+      originalPrice: regionPricing.price || 0,
+      discountedPrice: regionPricing.finalPrice || 0,
+      currency: regionPricing.currency || 'INR',
+      discountPercentage: regionPricing.discountPercentage || 0,
       batchType: schedule.batchType,
       courseType: schedule.courseType,
       language: schedule.language,
@@ -414,7 +463,8 @@ export const getAllSchedulesByCourseName = asyncHandler(async (req: CustomReques
       course: {
         id: course.id,
         name: course.name
-      }
+      },
+      debug: { region, ip: req.ip || req.connection?.remoteAddress }
     },
     'Schedules retrieved successfully',
     200
