@@ -7,7 +7,8 @@ import {
   courses,
   registrations,
   users,
-  serviceTypes
+  serviceTypes,
+  viewCourseSchedules
 } from '../../models';
 import {
   eq,
@@ -469,5 +470,74 @@ export const getAllSchedulesByCourseName = asyncHandler(async (req: CustomReques
     'Schedules retrieved successfully',
     200
   );
+  res.status(200).json(response);
+});
+
+/**
+ * Get Schedules by Service Type (Categorized)
+ */
+export const getSchedulesByServiceType = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const { serviceType } = req.params;
+
+  if (!serviceType) {
+    throw new AppError(400, 'Service type is required');
+  }
+
+  // Get country region from request
+  const region = getCountryRegion(req);
+  const today = new Date().toISOString().split('T')[0];
+
+  // Sanitize serviceType (replace hyphens with spaces for better matching with DB names like "Generative AI")
+  const searchTerm = serviceType.replace(/-/g, ' ');
+
+  const results = await db.select()
+    .from(viewCourseSchedules)
+    .where(and(
+      ilike(viewCourseSchedules.serviceTypeName, searchTerm),
+      eq(viewCourseSchedules.is_active, true),
+      sql`${viewCourseSchedules.startDate} >= ${today}`
+    ))
+    .orderBy(viewCourseSchedules.startDate);
+
+  const formattedSchedules = results.map(schedule => {
+    const pricing = (schedule.pricing as any[]) || [];
+    const regionPricing = pricing.find(p => p.country === region) || pricing.find(p => p.country === 'USA') || pricing[0] || {};
+
+    return {
+      id: schedule.scheduleId,
+      courseId: schedule.courseId,
+      courseName: schedule.courseName,
+      dateRange: formatScheduleDate(schedule.startDate!, schedule.endDate!),
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
+      timeRange: formatScheduleTime(schedule.startTime!, schedule.endTime!),
+      startTime: schedule.startTime,
+      endTime: schedule.endTime,
+      trainerName: schedule.mentor,
+      trainerImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100',
+      originalPrice: regionPricing.price || 0,
+      discountedPrice: regionPricing.finalPrice || 0,
+      currency: regionPricing.currency || 'INR',
+      discountPercentage: regionPricing.discountPercentage || 0,
+      batchType: schedule.batchType,
+      courseType: schedule.courseType,
+      language: schedule.language,
+      capacityRemaining: schedule.capacityRemaining,
+      difficultyLevel: schedule.difficultyLevel,
+      duration: schedule.duration
+    };
+  });
+
+  const response = formatResponse(
+    true,
+    {
+      schedules: formattedSchedules,
+      serviceType,
+      debug: { region, ip: req.ip || req.connection?.remoteAddress }
+    },
+    'Schedules for service type retrieved successfully',
+    200
+  );
+
   res.status(200).json(response);
 });

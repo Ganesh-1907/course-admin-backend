@@ -12,6 +12,7 @@ router.get('/', courseController.getAllCourses);
 router.get('/search', courseController.searchCourses);
 router.get('/v2/recent-schedule', courseController.getRecentScheduleByCourseName);
 router.get('/v2/all-schedules', courseController.getAllSchedulesByCourseName);
+router.get('/v2/schedules-by-type/:serviceType', courseController.getSchedulesByServiceType);
 router.get('/type/:serviceType', courseController.getCoursesByType);
 router.get('/:courseId', courseController.getCourseDetails);
 

@@ -10,9 +10,10 @@ import {
     decimal,
     integer,
     jsonb,
-    index
+    index,
+    pgView
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 // 1. Service Types Table
 export const serviceTypes = pgTable('service_types', {
@@ -139,3 +140,32 @@ export const registrationsRelations = relations(registrations, ({ one }) => ({
         references: [courseSchedules.id],
     }),
 }));
+
+// 6. Course Schedules View
+export const viewCourseSchedules = pgView('view_course_schedules', {
+    scheduleId: integer('schedule_id'),
+    courseId: integer('course_id'),
+    courseName: varchar('course_name', { length: 255 }),
+    serviceTypeId: integer('service_type_id'),
+    serviceTypeName: varchar('service_type_name', { length: 100 }),
+    mentor: varchar('mentor', { length: 255 }),
+    startDate: date('start_date'),
+    endDate: date('end_date'),
+    startTime: time('start_time'),
+    endTime: time('end_time'),
+    batchType: varchar('batch_type', { length: 50 }),
+    courseType: varchar('course_type', { length: 50 }),
+    address: text('address'),
+    language: varchar('language', { length: 50 }),
+    description: text('description'),
+    difficultyLevel: varchar('difficulty_level', { length: 50 }),
+    duration: integer('duration'),
+    brochureUrl: varchar('brochure_url', { length: 1024 }),
+    pricing: jsonb('pricing'),
+    maxParticipants: integer('max_participants'),
+    capacityRemaining: integer('capacity_remaining'),
+    enrollment_count: integer('enrollment_count'),
+    is_active: boolean('is_active'),
+    createdAt: timestamp('created_at'),
+    updatedAt: timestamp('updated_at'),
+}).as(sql`SELECT cs.id AS schedule_id, c.id AS course_id, c.name AS course_name, st.id AS service_type_id, st.name AS service_type_name, cs.mentor, cs.start_date, cs.end_date, cs.start_time, cs.end_time, cs.batch_type, cs.course_type, cs.address, cs.language, cs.description, cs.difficulty_level, cs.duration, cs.brochure_url, cs.pricing, cs.max_participants, cs.capacity_remaining, cs.enrollment_count, cs.is_active, cs.created_at, cs.updated_at FROM course_schedules cs JOIN courses c ON cs.course_id = c.id LEFT JOIN service_types st ON c.service_type_id = st.id`);
