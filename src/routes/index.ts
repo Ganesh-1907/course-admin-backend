@@ -7,6 +7,7 @@ import userAuthRoutes from './user/authRoutes';
 import userCourseRoutes from './user/courseRoutes';
 import userRegistrationRoutes from './user/registrationRoutes';
 import userCartRoutes from './user/cartRoutes';
+import userPaymentRoutes from './user/paymentRoutes';
 
 const router = express.Router();
 
@@ -25,6 +26,7 @@ router.use('/user/auth', userAuthRoutes);
 router.use('/user/courses', userCourseRoutes);
 router.use('/user/registrations', userRegistrationRoutes);
 router.use('/user/cart', userCartRoutes);
+router.use('/user/payments', userPaymentRoutes);
 
 /**
  * Health Check

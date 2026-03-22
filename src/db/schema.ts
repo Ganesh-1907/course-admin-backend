@@ -29,6 +29,7 @@ export const users = pgTable('users', {
     name: varchar('name', { length: 255 }).notNull(),
     email: varchar('email', { length: 255 }).notNull().unique(),
     password: varchar('password', { length: 255 }).notNull(),
+    mobile: varchar('mobile', { length: 20 }), // Unified field for contact number
     role: varchar('role', { length: 50 }).notNull().default('participant'), // admin, participant, super_admin
     status: varchar('status', { length: 50 }).default('ACTIVE'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -87,6 +88,7 @@ export const registrations = pgTable('registrations', {
     scheduleId: integer('schedule_id').notNull().references(() => courseSchedules.id, { onDelete: 'cascade' }),
     registrationNumber: varchar('registration_number', { length: 50 }).notNull().unique(),
     paymentId: varchar('payment_id', { length: 255 }),
+    paymentGateway: varchar('payment_gateway', { length: 50 }), // razorpay, stripe
     amountPaid: decimal('amount_paid', { precision: 12, scale: 2 }),
     currency: varchar('currency', { length: 10 }).default('INR'),
     transactionDate: timestamp('transaction_date', { withTimezone: true }),

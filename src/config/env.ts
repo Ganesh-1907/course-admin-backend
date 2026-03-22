@@ -29,6 +29,16 @@ export const config = {
   },
   // Session secret
   SESSION_SECRET: process.env.SESSION_SECRET || 'your_session_secret_change_in_production',
+
+  // Razorpay
+  RAZORPAY: {
+    KEY_ID: process.env.RAZORPAY_KEY_ID,
+    KEY_SECRET: process.env.RAZORPAY_KEY_SECRET,
+  },
+  STRIPE: {
+    PUBLISHABLE_KEY: process.env.STRIPE_PUBLISHABLE_KEY,
+    SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+  },
 };
 
 

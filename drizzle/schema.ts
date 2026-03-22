@@ -1,21 +1,7 @@
-import { pgTable, index, unique, serial, varchar, timestamp, foreignKey, integer, numeric, text, date, time, jsonb, boolean, pgView } from "drizzle-orm/pg-core"
+import { pgTable, index, foreignKey, serial, varchar, integer, timestamp, unique, numeric, text, date, time, jsonb, boolean, pgView } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 
-
-export const users = pgTable("users", {
-	id: serial().primaryKey().notNull(),
-	name: varchar({ length: 255 }).notNull(),
-	email: varchar({ length: 255 }).notNull(),
-	password: varchar({ length: 255 }).notNull(),
-	role: varchar({ length: 50 }).default('participant').notNull(),
-	status: varchar({ length: 50 }).default('ACTIVE'),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
-	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
-}, (table) => [
-	index("idx_users_email").using("btree", table.email.asc().nullsLast().op("text_ops")),
-	unique("users_email_unique").on(table.email),
-]);
 
 export const courses = pgTable("courses", {
 	id: serial().primaryKey().notNull(),
@@ -41,6 +27,21 @@ export const serviceTypes = pgTable("service_types", {
 	unique("service_types_name_unique").on(table.name),
 ]);
 
+export const users = pgTable("users", {
+	id: serial().primaryKey().notNull(),
+	name: varchar({ length: 255 }).notNull(),
+	email: varchar({ length: 255 }).notNull(),
+	password: varchar({ length: 255 }).notNull(),
+	role: varchar({ length: 50 }).default('participant').notNull(),
+	status: varchar({ length: 50 }).default('ACTIVE'),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+	mobile: varchar({ length: 20 }),
+}, (table) => [
+	index("idx_users_email").using("btree", table.email.asc().nullsLast().op("text_ops")),
+	unique("users_email_unique").on(table.email),
+]);
+
 export const registrations = pgTable("registrations", {
 	id: serial().primaryKey().notNull(),
 	userId: integer("user_id").notNull(),
@@ -55,6 +56,7 @@ export const registrations = pgTable("registrations", {
 	notes: text(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+	paymentGateway: varchar("payment_gateway", { length: 50 }),
 }, (table) => [
 	index("idx_registrations_schedule_id").using("btree", table.scheduleId.asc().nullsLast().op("int4_ops")),
 	index("idx_registrations_user_id").using("btree", table.userId.asc().nullsLast().op("int4_ops")),
