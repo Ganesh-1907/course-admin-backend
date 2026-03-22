@@ -8,6 +8,7 @@ const router = express.Router();
  */
 
 // Course browsing
+router.get('/service-types', courseController.getServiceTypes);
 router.get('/', courseController.getAllCourses);
 router.get('/search', courseController.searchCourses);
 router.get('/v2/recent-schedule', courseController.getRecentScheduleByCourseName);

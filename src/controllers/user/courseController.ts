@@ -541,3 +541,12 @@ export const getSchedulesByServiceType = asyncHandler(async (req: CustomRequest,
 
   res.status(200).json(response);
 });
+/**
+ * Get All Service Types
+ */
+export const getServiceTypes = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const results = await db.select().from(serviceTypes).orderBy(serviceTypes.name);
+
+  const response = formatResponse(true, results, 'Service types retrieved successfully', 200);
+  res.status(200).json(response);
+});
