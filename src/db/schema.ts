@@ -30,6 +30,16 @@ export const users = pgTable('users', {
     email: varchar('email', { length: 255 }).notNull().unique(),
     password: varchar('password', { length: 255 }).notNull(),
     mobile: varchar('mobile', { length: 20 }), // Unified field for contact number
+    location: varchar('location', { length: 255 }),
+    timezone: varchar('timezone', { length: 100 }),
+    dob: date('dob'),
+    country: varchar('country', { length: 100 }),
+    state: varchar('state', { length: 100 }),
+    gender: varchar('gender', { length: 50 }),
+    linkedinUrl: varchar('linkedin_url', { length: 512 }),
+    facebookUrl: varchar('facebook_url', { length: 512 }),
+    twitterUrl: varchar('twitter_url', { length: 512 }),
+    websiteUrl: varchar('website_url', { length: 512 }),
     role: varchar('role', { length: 50 }).notNull().default('participant'), // admin, participant, super_admin
     status: varchar('status', { length: 50 }).default('ACTIVE'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
