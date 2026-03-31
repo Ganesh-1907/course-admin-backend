@@ -172,11 +172,10 @@ export const getUserProfile = asyncHandler(async (req: CustomRequest, res: Respo
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
     .where(eq(registrations.userId, req.user.id));
 
+  const { password: _, ...userFields } = user;
+
   const profile = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
+    ...userFields,
     registeredCourses
   };
 
@@ -192,10 +191,24 @@ export const updateUserProfile = asyncHandler(async (req: CustomRequest, res: Re
     throw new AppError(401, 'User not authenticated');
   }
 
-  const { name } = req.body;
+  const { 
+    name, mobile, location, timezone, dob, country, state, gender, 
+    linkedinUrl, facebookUrl, twitterUrl, websiteUrl 
+  } = req.body;
 
   const updateData: any = {
-    ...(name && { name }),
+    ...(name !== undefined && { name }),
+    ...(mobile !== undefined && { mobile }),
+    ...(location !== undefined && { location }),
+    ...(timezone !== undefined && { timezone }),
+    ...(dob !== undefined && { dob: dob ? new Date(dob) : null }),
+    ...(country !== undefined && { country }),
+    ...(state !== undefined && { state }),
+    ...(gender !== undefined && { gender }),
+    ...(linkedinUrl !== undefined && { linkedinUrl }),
+    ...(facebookUrl !== undefined && { facebookUrl }),
+    ...(twitterUrl !== undefined && { twitterUrl }),
+    ...(websiteUrl !== undefined && { websiteUrl }),
     updatedAt: new Date()
   };
 
@@ -210,7 +223,10 @@ export const updateUserProfile = asyncHandler(async (req: CustomRequest, res: Re
     throw new AppError(404, 'User not found');
   }
 
-  const response = formatResponse(true, user, 'Profile updated successfully', 200);
+  // Remove password from response
+  const { password: _, ...userWithoutPassword } = user;
+
+  const response = formatResponse(true, userWithoutPassword, 'Profile updated successfully', 200);
   res.status(200).json(response);
 });
 
