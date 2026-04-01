@@ -83,6 +83,7 @@ export const courseSchedules = pgTable('course_schedules', {
     maxParticipants: integer('max_participants'),
     capacityRemaining: integer('capacity_remaining'),
     enrollmentCount: integer('enrollment_count').default(0),
+    planAvailable: boolean('plan_available').default(true),
     isActive: boolean('is_active').default(true),
     createdBy: integer('created_by').references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -112,10 +113,22 @@ export const registrations = pgTable('registrations', {
     scheduleIdIdx: index('idx_registrations_schedule_id').on(t.scheduleId),
 }));
 
+// 6. Cart Items Table
+export const cartItems = pgTable('cart_items', {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    scheduleId: integer('schedule_id').notNull().references(() => courseSchedules.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+    userIdIdx: index('idx_cart_items_user_id').on(t.userId),
+}));
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
     schedulesCreated: many(courseSchedules),
     registrations: many(registrations),
+    cartItems: many(cartItems),
 }));
 
 export const serviceTypesRelations = relations(serviceTypes, ({ many }) => ({
@@ -140,6 +153,7 @@ export const courseSchedulesRelations = relations(courseSchedules, ({ one, many 
         references: [users.id],
     }),
     registrations: many(registrations),
+    cartItems: many(cartItems),
 }));
 
 export const registrationsRelations = relations(registrations, ({ one }) => ({
@@ -149,6 +163,17 @@ export const registrationsRelations = relations(registrations, ({ one }) => ({
     }),
     schedule: one(courseSchedules, {
         fields: [registrations.scheduleId],
+        references: [courseSchedules.id],
+    }),
+}));
+
+export const cartItemsRelations = relations(cartItems, ({ one }) => ({
+    user: one(users, {
+        fields: [cartItems.userId],
+        references: [users.id],
+    }),
+    schedule: one(courseSchedules, {
+        fields: [cartItems.scheduleId],
         references: [courseSchedules.id],
     }),
 }));
@@ -177,7 +202,8 @@ export const viewCourseSchedules = pgView('view_course_schedules', {
     maxParticipants: integer('max_participants'),
     capacityRemaining: integer('capacity_remaining'),
     enrollment_count: integer('enrollment_count'),
+    plan_available: boolean('plan_available'),
     is_active: boolean('is_active'),
     createdAt: timestamp('created_at'),
     updatedAt: timestamp('updated_at'),
-}).as(sql`SELECT cs.id AS schedule_id, c.id AS course_id, c.name AS course_name, st.id AS service_type_id, st.name AS service_type_name, cs.mentor, cs.start_date, cs.end_date, cs.start_time, cs.end_time, cs.batch_type, cs.course_type, cs.address, cs.language, cs.description, cs.difficulty_level, cs.duration, cs.brochure_url, cs.pricing, cs.max_participants, cs.capacity_remaining, cs.enrollment_count, cs.is_active, cs.created_at, cs.updated_at FROM course_schedules cs JOIN courses c ON cs.course_id = c.id LEFT JOIN service_types st ON c.service_type_id = st.id`);
+}).as(sql`SELECT cs.id AS schedule_id, c.id AS course_id, c.name AS course_name, st.id AS service_type_id, st.name AS service_type_name, cs.mentor, cs.start_date, cs.end_date, cs.start_time, cs.end_time, cs.batch_type, cs.course_type, cs.address, cs.language, cs.description, cs.difficulty_level, cs.duration, cs.brochure_url, cs.pricing, cs.max_participants, cs.capacity_remaining, cs.enrollment_count, cs.plan_available, cs.is_active, cs.created_at, cs.updated_at FROM course_schedules cs JOIN courses c ON cs.course_id = c.id LEFT JOIN service_types st ON c.service_type_id = st.id`);

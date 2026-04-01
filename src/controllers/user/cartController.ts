@@ -1,6 +1,6 @@
-import { Response } from 'express';
+import { Response, NextFunction } from 'express';
 import { CustomRequest } from '../../types/common';
-import { db, courseSchedules, courses } from '../../models';
+import { db, courseSchedules, courses, cartItems } from '../../models';
 import { eq, inArray, and } from 'drizzle-orm';
 import { formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
@@ -8,14 +8,27 @@ import { AppError, asyncHandler } from '../../middleware/errorHandler';
 /**
  * Get Cart Items Details
  */
-export const getCart = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const cart = req.session.cart || [];
+export const getCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
+  let scheduleIds: number[] = [];
 
-  if (cart.length === 0) {
-    return res.status(200).json(formatResponse(true, [], 'Cart is empty', 200));
+  if (req.user) {
+    // Fetch from database for logged-in user
+    const dbCart = await db.select({
+      scheduleId: cartItems.scheduleId
+    })
+      .from(cartItems)
+      .where(eq(cartItems.userId, req.user.id));
+
+    scheduleIds = dbCart.map(item => item.scheduleId);
+  } else {
+    // Fallback to session for guest
+    const cart = req.session.cart || [];
+    scheduleIds = cart.map(item => typeof item.courseId === 'string' ? parseInt(item.courseId) : item.courseId as number);
   }
 
-  const scheduleIds = cart.map(item => typeof item.courseId === 'string' ? parseInt(item.courseId) : item.courseId);
+  if (scheduleIds.length === 0) {
+    return res.status(200).json(formatResponse(true, [], 'Cart is empty', 200));
+  }
 
   const results = await db.select({
     id: courseSchedules.id,
@@ -25,6 +38,7 @@ export const getCart = asyncHandler(async (req: CustomRequest, res: Response) =>
     endDate: courseSchedules.endDate,
     pricing: courseSchedules.pricing,
     brochureUrl: courseSchedules.brochureUrl,
+    planAvailable: courseSchedules.planAvailable,
   })
     .from(courseSchedules)
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
@@ -40,7 +54,7 @@ export const getCart = asyncHandler(async (req: CustomRequest, res: Response) =>
 /**
  * Add To Cart
  */
-export const addToCart = asyncHandler(async (req: CustomRequest, res: Response) => {
+export const addToCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { courseId } = req.body; // This is scheduleId
 
   if (!courseId) {
@@ -49,7 +63,7 @@ export const addToCart = asyncHandler(async (req: CustomRequest, res: Response) 
 
   const scheduleId = typeof courseId === 'string' ? parseInt(courseId) : courseId;
 
-  // Fetch course details to store in session
+  // Verify course exists
   const results = await db.select({
     id: courseSchedules.id,
     name: courses.name,
@@ -66,27 +80,49 @@ export const addToCart = asyncHandler(async (req: CustomRequest, res: Response) 
 
   const schedule = results[0];
 
-  if (!req.session.cart) {
-    req.session.cart = [];
-  }
+  if (req.user) {
+    // Save to database for logged-in user
+    const existing = await db.select()
+      .from(cartItems)
+      .where(and(
+        eq(cartItems.userId, req.user.id),
+        eq(cartItems.scheduleId, scheduleId)
+      ))
+      .limit(1);
 
-  const exists = req.session.cart.find(item => item.courseId === scheduleId);
-  if (!exists) {
-    req.session.cart.push({
-      courseId: schedule.id,
-      courseName: schedule.name,
-      pricing: schedule.pricing
-    });
-  }
+    if (existing.length === 0) {
+      await db.insert(cartItems).values({
+        userId: req.user.id,
+        scheduleId: scheduleId
+      });
+    }
 
-  const response = formatResponse(true, req.session.cart, 'Course added to cart', 200);
-  res.status(200).json(response);
+    // Return the updated cart from DB
+    return getCart(req, res, () => { });
+  } else {
+    // Session fallback for guest
+    if (!req.session.cart) {
+      req.session.cart = [];
+    }
+
+    const exists = req.session.cart.find(item => item.courseId === scheduleId);
+    if (!exists) {
+      req.session.cart.push({
+        courseId: schedule.id,
+        courseName: schedule.name,
+        pricing: schedule.pricing
+      });
+    }
+
+    const response = formatResponse(true, req.session.cart, 'Course added to cart', 200);
+    res.status(200).json(response);
+  }
 });
 
 /**
  * Remove From Cart
  */
-export const removeFromCart = asyncHandler(async (req: CustomRequest, res: Response) => {
+export const removeFromCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { courseId } = req.params;
 
   if (!courseId) {
@@ -95,18 +131,34 @@ export const removeFromCart = asyncHandler(async (req: CustomRequest, res: Respo
 
   const scheduleId = parseInt(courseId);
 
-  if (req.session.cart) {
-    req.session.cart = req.session.cart.filter(item => item.courseId !== scheduleId);
-  }
+  if (req.user) {
+    // Remove from database
+    await db.delete(cartItems)
+      .where(and(
+        eq(cartItems.userId, req.user.id),
+        eq(cartItems.scheduleId, scheduleId)
+      ));
 
-  const response = formatResponse(true, req.session.cart || [], 'Course removed from cart', 200);
-  res.status(200).json(response);
+    return getCart(req, res, next);
+  } else {
+    // Remove from session
+    if (req.session.cart) {
+      req.session.cart = req.session.cart.filter(item => item.courseId !== scheduleId);
+    }
+
+    const response = formatResponse(true, req.session.cart || [], 'Course removed from cart', 200);
+    res.status(200).json(response);
+  }
 });
 
 /**
  * Clear Cart
  */
-export const clearCart = asyncHandler(async (req: CustomRequest, res: Response) => {
+export const clearCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
+  if (req.user) {
+    await db.delete(cartItems).where(eq(cartItems.userId, req.user.id));
+  }
+
   req.session.cart = [];
   const response = formatResponse(true, [], 'Cart cleared', 200);
   res.status(200).json(response);
@@ -115,7 +167,7 @@ export const clearCart = asyncHandler(async (req: CustomRequest, res: Response) 
 /**
  * Validate Promo Code (Placeholder)
  */
-export const validatePromoCode = asyncHandler(async (req: CustomRequest, res: Response) => {
+export const validatePromoCode = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { code, courseId } = req.body;
 
   if (!code || !courseId) {

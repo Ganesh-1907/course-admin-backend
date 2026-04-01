@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { serviceTypes, courses, users, registrations, courseSchedules } from "./schema";
+import { serviceTypes, courses, users, cartItems, courseSchedules, registrations } from "./schema";
 
 export const coursesRelations = relations(courses, ({one, many}) => ({
 	serviceType: one(serviceTypes, {
@@ -13,23 +13,25 @@ export const serviceTypesRelations = relations(serviceTypes, ({many}) => ({
 	courses: many(courses),
 }));
 
-export const registrationsRelations = relations(registrations, ({one}) => ({
+export const cartItemsRelations = relations(cartItems, ({one}) => ({
 	user: one(users, {
-		fields: [registrations.userId],
+		fields: [cartItems.userId],
 		references: [users.id]
 	}),
 	courseSchedule: one(courseSchedules, {
-		fields: [registrations.scheduleId],
+		fields: [cartItems.scheduleId],
 		references: [courseSchedules.id]
 	}),
 }));
 
 export const usersRelations = relations(users, ({many}) => ({
+	cartItems: many(cartItems),
 	registrations: many(registrations),
 	courseSchedules: many(courseSchedules),
 }));
 
 export const courseSchedulesRelations = relations(courseSchedules, ({one, many}) => ({
+	cartItems: many(cartItems),
 	registrations: many(registrations),
 	course: one(courses, {
 		fields: [courseSchedules.courseId],
@@ -38,5 +40,16 @@ export const courseSchedulesRelations = relations(courseSchedules, ({one, many})
 	user: one(users, {
 		fields: [courseSchedules.createdBy],
 		references: [users.id]
+	}),
+}));
+
+export const registrationsRelations = relations(registrations, ({one}) => ({
+	user: one(users, {
+		fields: [registrations.userId],
+		references: [users.id]
+	}),
+	courseSchedule: one(courseSchedules, {
+		fields: [registrations.scheduleId],
+		references: [courseSchedules.id]
 	}),
 }));

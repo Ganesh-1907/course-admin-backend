@@ -156,6 +156,7 @@ const seedSchedules = async () => {
                     batchType,
                     courseType: 'ONLINE',
                     language,
+                    planAvailable: s % 2 === 0, // Alternate for testing
                     isActive: true,
                     maxParticipants: capacity,
                     enrollmentCount: filled,

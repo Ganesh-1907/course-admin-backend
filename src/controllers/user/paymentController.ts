@@ -7,7 +7,8 @@ import {
     db,
     registrations,
     courseSchedules,
-    users
+    users,
+    cartItems
 } from '../../models';
 import { eq, and, sql } from 'drizzle-orm';
 import config from '../../config/env';
@@ -30,7 +31,7 @@ async function processSuccessfulRegistration(
     amount: number,
     paymentId: string,
     paymentGateway: string,
-    reqUser?: any
+    req?: CustomRequest
 ) {
     // 1. Get or Create User
     let userId: number;
@@ -90,7 +91,7 @@ async function processSuccessfulRegistration(
         // 3. Create Registration
         const timestamp = Date.now().toString().slice(-6);
         const random = crypto.randomBytes(3).toString('hex').toUpperCase();
-        const registrationNumber = `REG${timestamp}${random} `;
+        const registrationNumber = `REG${timestamp}${random}`;
 
         const [newReg] = await db.insert(registrations).values({
             userId,
@@ -113,6 +114,16 @@ async function processSuccessfulRegistration(
             .where(eq(courseSchedules.id, sId));
 
         createdRegistrations.push(newReg);
+    }
+
+    // 5. Clear Cart (Both DB and Session)
+    if (typeof userIdOrData === 'number') {
+        await db.delete(cartItems).where(eq(cartItems.userId, userIdOrData));
+    }
+
+    // Clear session cart if available
+    if (req && req.session) {
+        req.session.cart = [];
     }
 
     return createdRegistrations;
@@ -143,7 +154,7 @@ export const createRazorpayOrder = asyncHandler(async (req: CustomRequest, res: 
     const options = {
         amount: Math.round(amount * 100), // amount in paise
         currency: 'INR',
-        receipt: `receipt_${Date.now()}_${numericScheduleId} `,
+        receipt: `receipt_${Date.now()}_${numericScheduleId}`,
     };
 
     try {
@@ -184,9 +195,9 @@ export const verifyRazorpayPayment = asyncHandler(async (req: CustomRequest, res
     }
 
     const userIdOrData = req.user ? req.user.id : userData;
-    const registrations = await processSuccessfulRegistration(userIdOrData, scheduleIds, amount, razorpay_payment_id, 'RAZORPAY', req.user);
+    const items = await processSuccessfulRegistration(userIdOrData, scheduleIds, amount, razorpay_payment_id, 'RAZORPAY', req);
 
-    res.status(200).json(formatResponse(true, registrations, 'Payment verified and registrations confirmed', 200));
+    res.status(200).json(formatResponse(true, items, 'Payment verified and registrations confirmed', 200));
 });
 
 /**
@@ -246,9 +257,9 @@ export const verifyStripePayment = asyncHandler(async (req: CustomRequest, res: 
         }
 
         const userIdOrData = req.user ? req.user.id : userData;
-        const registrations = await processSuccessfulRegistration(userIdOrData, scheduleIds, amount, paymentIntentId, 'STRIPE', req.user);
+        const items = await processSuccessfulRegistration(userIdOrData, scheduleIds, amount, paymentIntentId, 'STRIPE', req);
 
-        res.status(200).json(formatResponse(true, registrations, 'Stripe payment verified and registrations confirmed', 200));
+        res.status(200).json(formatResponse(true, items, 'Stripe payment verified and registrations confirmed', 200));
     } catch (err: any) {
         console.error('Stripe Verification Error:', err);
         throw new AppError(500, `Stripe verification failed: ${err.message} `);

@@ -1,4 +1,4 @@
-import { pgTable, index, foreignKey, serial, varchar, integer, timestamp, unique, numeric, text, date, time, jsonb, boolean, pgView } from "drizzle-orm/pg-core"
+import { pgTable, index, foreignKey, serial, varchar, integer, timestamp, unique, date, numeric, text, time, jsonb, boolean, pgView } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 
@@ -27,6 +27,26 @@ export const serviceTypes = pgTable("service_types", {
 	unique("service_types_name_unique").on(table.name),
 ]);
 
+export const cartItems = pgTable("cart_items", {
+	id: serial().primaryKey().notNull(),
+	userId: integer("user_id").notNull(),
+	scheduleId: integer("schedule_id").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+}, (table) => [
+	index("idx_cart_items_user_id").using("btree", table.userId.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [users.id],
+			name: "cart_items_user_id_users_id_fk"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.scheduleId],
+			foreignColumns: [courseSchedules.id],
+			name: "cart_items_schedule_id_course_schedules_id_fk"
+		}).onDelete("cascade"),
+]);
+
 export const users = pgTable("users", {
 	id: serial().primaryKey().notNull(),
 	name: varchar({ length: 255 }).notNull(),
@@ -37,6 +57,16 @@ export const users = pgTable("users", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 	mobile: varchar({ length: 20 }),
+	location: varchar({ length: 255 }),
+	timezone: varchar({ length: 100 }),
+	dob: date(),
+	country: varchar({ length: 100 }),
+	state: varchar({ length: 100 }),
+	gender: varchar({ length: 50 }),
+	linkedinUrl: varchar("linkedin_url", { length: 512 }),
+	facebookUrl: varchar("facebook_url", { length: 512 }),
+	twitterUrl: varchar("twitter_url", { length: 512 }),
+	websiteUrl: varchar("website_url", { length: 512 }),
 }, (table) => [
 	index("idx_users_email").using("btree", table.email.asc().nullsLast().op("text_ops")),
 	unique("users_email_unique").on(table.email),
@@ -97,6 +127,7 @@ export const courseSchedules = pgTable("course_schedules", {
 	createdBy: integer("created_by"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
+	planAvailable: boolean("plan_available").default(true),
 }, (table) => [
 	index("idx_schedules_course_id").using("btree", table.courseId.asc().nullsLast().op("int4_ops")),
 	foreignKey({
