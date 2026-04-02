@@ -1,4 +1,4 @@
-import { db, courses, serviceTypes, courseSchedules } from '../models';
+import { db, courses, serviceTypes } from '../models';
 import { sql } from 'drizzle-orm';
 
 const courseData = [
@@ -172,8 +172,8 @@ const seedCourses = async () => {
 
         // Clear existing courses and service types
         // Also clear schedules and registrations because they depend on courses
-        await db.execute(sql`TRUNCATE TABLE registrations, course_schedules, courses, service_types RESTART IDENTITY CASCADE`);
-        console.log('✓ Cleared existing courses, schedules, and service types');
+        await db.execute(sql`TRUNCATE TABLE cart_items, registrations, course_schedules, mentor_course_mappings, courses, service_types RESTART IDENTITY CASCADE`);
+        console.log('✓ Cleared existing courses, mentor mappings, schedules, and service types');
 
         // Extract unique service types
         const uniqueTypes = Array.from(new Set(courseData.map(c => c.type)));

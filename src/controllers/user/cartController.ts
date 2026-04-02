@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { CustomRequest } from '../../types/common';
-import { db, courseSchedules, courses, cartItems } from '../../models';
+import { db, courseSchedules, courses, mentors, cartItems } from '../../models';
 import { eq, inArray, and } from 'drizzle-orm';
 import { formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
@@ -33,7 +33,9 @@ export const getCart = asyncHandler(async (req: CustomRequest, res: Response, ne
   const results = await db.select({
     id: courseSchedules.id,
     courseName: courses.name,
-    mentor: courseSchedules.mentor,
+    mentor: mentors.name,
+    mentorId: mentors.id,
+    mentorPhotoUrl: mentors.photoUrl,
     startDate: courseSchedules.startDate,
     endDate: courseSchedules.endDate,
     pricing: courseSchedules.pricing,
@@ -42,6 +44,7 @@ export const getCart = asyncHandler(async (req: CustomRequest, res: Response, ne
   })
     .from(courseSchedules)
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .where(and(
       inArray(courseSchedules.id, scheduleIds),
       eq(courseSchedules.isActive, true)

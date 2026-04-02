@@ -5,6 +5,8 @@ export const {
     users,
     serviceTypes,
     courses,
+    mentors,
+    mentorCourseMappings,
     courseSchedules,
     registrations,
     cartItems,

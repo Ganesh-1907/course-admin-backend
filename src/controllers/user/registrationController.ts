@@ -5,6 +5,7 @@ import {
   registrations,
   courseSchedules,
   courses,
+  mentors,
   users
 } from '../../models';
 import {
@@ -125,13 +126,14 @@ export const getUserRegistrations = asyncHandler(async (req: CustomRequest, res:
     createdAt: registrations.createdAt,
     courseId: courseSchedules.id,
     courseName: courses.name,
-    mentor: courseSchedules.mentor,
+    mentor: mentors.name,
     startDate: courseSchedules.startDate,
     endDate: courseSchedules.endDate,
   })
     .from(registrations)
     .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .where(whereClause)
     .limit(pageLimit)
     .offset(skip)
@@ -175,11 +177,13 @@ export const getRegistrationDetails = asyncHandler(async (req: CustomRequest, re
     registration: registrations,
     schedule: courseSchedules,
     course: courses,
+    mentor: mentors,
     user: users
   })
     .from(registrations)
     .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .innerJoin(users, eq(registrations.userId, users.id))
     .where(and(eq(registrations.id, registrationId), eq(registrations.userId, req.user.id)))
     .limit(1);
@@ -188,12 +192,23 @@ export const getRegistrationDetails = asyncHandler(async (req: CustomRequest, re
     throw new AppError(404, 'Registration not found');
   }
 
-  const { registration, schedule, course, user } = results[0];
+  const { registration, schedule, course, mentor, user } = results[0];
   const combined = {
     ...registration,
     courseId: schedule.id,
     courseName: course.name,
-    mentor: schedule.mentor,
+    mentor: mentor.name,
+    mentorId: mentor.id,
+    mentorProfile: {
+      id: mentor.id,
+      name: mentor.name,
+      specialization: mentor.specialization,
+      designation: mentor.designation,
+      rating: mentor.rating ? Number(mentor.rating) : null,
+      yearsOfExperience: mentor.yearsOfExperience,
+      linkedinId: mentor.linkedinId,
+      photoUrl: mentor.photoUrl,
+    },
     startDate: schedule.startDate,
     endDate: schedule.endDate,
     batchType: schedule.batchType,

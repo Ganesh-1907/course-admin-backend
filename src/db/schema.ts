@@ -11,7 +11,8 @@ import {
     integer,
     jsonb,
     index,
-    pgView
+    pgView,
+    uniqueIndex
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -59,11 +60,43 @@ export const courses = pgTable('courses', {
     nameIdx: index('idx_courses_name').on(t.name),
 }));
 
-// 4. Course Schedules Table
+// 4. Mentors Table
+export const mentors = pgTable('mentors', {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 255 }).notNull(),
+    specialization: varchar('specialization', { length: 255 }).notNull(),
+    designation: varchar('designation', { length: 255 }).notNull(),
+    description: text('description'),
+    rating: decimal('rating', { precision: 2, scale: 1 }).default('0.0'),
+    yearsOfExperience: integer('years_of_experience').notNull().default(0),
+    linkedinId: varchar('linkedin_id', { length: 255 }),
+    photoUrl: varchar('photo_url', { length: 1024 }),
+    isActive: boolean('is_active').default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+    nameIdx: index('idx_mentors_name').on(t.name),
+    specializationIdx: index('idx_mentors_specialization').on(t.specialization),
+}));
+
+// 5. Mentor <-> Course Mapping Table
+export const mentorCourseMappings = pgTable('mentor_course_mappings', {
+    id: serial('id').primaryKey(),
+    mentorId: integer('mentor_id').notNull().references(() => mentors.id, { onDelete: 'cascade' }),
+    courseId: integer('course_id').notNull().references(() => courses.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+    mentorIdIdx: index('idx_mentor_course_mappings_mentor_id').on(t.mentorId),
+    courseIdIdx: index('idx_mentor_course_mappings_course_id').on(t.courseId),
+    mentorCourseUniqueIdx: uniqueIndex('idx_mentor_course_mappings_unique').on(t.mentorId, t.courseId),
+}));
+
+// 6. Course Schedules Table
 export const courseSchedules = pgTable('course_schedules', {
     id: serial('id').primaryKey(),
     courseId: integer('course_id').notNull().references(() => courses.id, { onDelete: 'cascade' }),
-    mentor: varchar('mentor', { length: 255 }).notNull(),
+    mentorId: integer('mentor_id').notNull().references(() => mentors.id),
     startDate: date('start_date').notNull(),
     endDate: date('end_date').notNull(),
     startTime: time('start_time'),
@@ -90,9 +123,10 @@ export const courseSchedules = pgTable('course_schedules', {
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 }, (t) => ({
     courseIdIdx: index('idx_schedules_course_id').on(t.courseId),
+    mentorIdIdx: index('idx_schedules_mentor_id').on(t.mentorId),
 }));
 
-// 5. Registrations Table
+// 7. Registrations Table
 export const registrations = pgTable('registrations', {
     id: serial('id').primaryKey(),
     userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -113,7 +147,7 @@ export const registrations = pgTable('registrations', {
     scheduleIdIdx: index('idx_registrations_schedule_id').on(t.scheduleId),
 }));
 
-// 6. Cart Items Table
+// 8. Cart Items Table
 export const cartItems = pgTable('cart_items', {
     id: serial('id').primaryKey(),
     userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -141,12 +175,33 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
         references: [serviceTypes.id],
     }),
     schedules: many(courseSchedules),
+    mentorMappings: many(mentorCourseMappings),
+}));
+
+export const mentorsRelations = relations(mentors, ({ many }) => ({
+    courseMappings: many(mentorCourseMappings),
+    schedules: many(courseSchedules),
+}));
+
+export const mentorCourseMappingsRelations = relations(mentorCourseMappings, ({ one }) => ({
+    mentor: one(mentors, {
+        fields: [mentorCourseMappings.mentorId],
+        references: [mentors.id],
+    }),
+    course: one(courses, {
+        fields: [mentorCourseMappings.courseId],
+        references: [courses.id],
+    }),
 }));
 
 export const courseSchedulesRelations = relations(courseSchedules, ({ one, many }) => ({
     course: one(courses, {
         fields: [courseSchedules.courseId],
         references: [courses.id],
+    }),
+    mentor: one(mentors, {
+        fields: [courseSchedules.mentorId],
+        references: [mentors.id],
     }),
     creator: one(users, {
         fields: [courseSchedules.createdBy],
@@ -186,6 +241,13 @@ export const viewCourseSchedules = pgView('view_course_schedules', {
     serviceTypeId: integer('service_type_id'),
     serviceTypeName: varchar('service_type_name', { length: 100 }),
     mentor: varchar('mentor', { length: 255 }),
+    mentorId: integer('mentor_id'),
+    mentorPhotoUrl: varchar('mentor_photo_url', { length: 1024 }),
+    mentorDesignation: varchar('mentor_designation', { length: 255 }),
+    mentorSpecialization: varchar('mentor_specialization', { length: 255 }),
+    mentorRating: decimal('mentor_rating', { precision: 2, scale: 1 }),
+    mentorYearsOfExperience: integer('mentor_years_of_experience'),
+    mentorLinkedinId: varchar('mentor_linkedin_id', { length: 255 }),
     startDate: date('start_date'),
     endDate: date('end_date'),
     startTime: time('start_time'),
@@ -206,4 +268,43 @@ export const viewCourseSchedules = pgView('view_course_schedules', {
     is_active: boolean('is_active'),
     createdAt: timestamp('created_at'),
     updatedAt: timestamp('updated_at'),
-}).as(sql`SELECT cs.id AS schedule_id, c.id AS course_id, c.name AS course_name, st.id AS service_type_id, st.name AS service_type_name, cs.mentor, cs.start_date, cs.end_date, cs.start_time, cs.end_time, cs.batch_type, cs.course_type, cs.address, cs.language, cs.description, cs.difficulty_level, cs.duration, cs.brochure_url, cs.pricing, cs.max_participants, cs.capacity_remaining, cs.enrollment_count, cs.plan_available, cs.is_active, cs.created_at, cs.updated_at FROM course_schedules cs JOIN courses c ON cs.course_id = c.id LEFT JOIN service_types st ON c.service_type_id = st.id`);
+}).as(sql`
+    SELECT
+        cs.id AS schedule_id,
+        c.id AS course_id,
+        c.name AS course_name,
+        st.id AS service_type_id,
+        st.name AS service_type_name,
+        m.name AS mentor,
+        m.id AS mentor_id,
+        m.photo_url AS mentor_photo_url,
+        m.designation AS mentor_designation,
+        m.specialization AS mentor_specialization,
+        m.rating AS mentor_rating,
+        m.years_of_experience AS mentor_years_of_experience,
+        m.linkedin_id AS mentor_linkedin_id,
+        cs.start_date,
+        cs.end_date,
+        cs.start_time,
+        cs.end_time,
+        cs.batch_type,
+        cs.course_type,
+        cs.address,
+        cs.language,
+        cs.description,
+        cs.difficulty_level,
+        cs.duration,
+        cs.brochure_url,
+        cs.pricing,
+        cs.max_participants,
+        cs.capacity_remaining,
+        cs.enrollment_count,
+        cs.plan_available,
+        cs.is_active,
+        cs.created_at,
+        cs.updated_at
+    FROM course_schedules cs
+    JOIN courses c ON cs.course_id = c.id
+    JOIN mentors m ON cs.mentor_id = m.id
+    LEFT JOIN service_types st ON c.service_type_id = st.id
+`);

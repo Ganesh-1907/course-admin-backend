@@ -1,29 +1,30 @@
-import { db, courses, courseSchedules } from '../models';
 import { sql } from 'drizzle-orm';
+import { db, courseSchedules } from '../models';
 
-// ── Mentors ─────────────────────────────────────────────────────────────────
-const mentorPool = [
-    'Dr. Arpit Mehta', 'Prof. Sunita Rao', 'Dr. Vikram Sethi', 'Ananya Iyer', 'Rahul Deshmukh',
-    'Saira Banu', 'Amitabh Joshi', 'Priyanka Sharma', 'Karthik Rajan', 'Deepa Narayanan',
-    'Sudha Murthy', 'Shashi Tharoor', 'Kiran Mazumdar', 'Raghuram Rajan', 'Amartya Sen',
-    'Satya Nadella', 'Sundar Pichai', 'Vinod Khosla', 'Azim Premji', 'Lakshmi Mittal',
-    'Uday Kotak', 'Nandan Nilekani', 'Dilip Shanghvi', 'Cyrus Poonawalla', 'Ananth Narayanan',
-    'Vijay Shekhar Sharma', 'Ritesh Agarwal', 'Byju Raveendran', 'Kunal Shah', 'Nithin Kamath'
-];
-const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+type CourseRow = {
+    id: number;
+    name: string;
+    service_type_name: string;
+};
 
-// ── Pricing by course type ─────────────────────────────────────────────────
-/**
- * Each course type gets its own realistic price bracket.
- * Prices are in: India (INR), USA (USD), Canada (CAD), Australia (AUD), Singapore (SGD), Europe (EUR)
- * A small random ±10% jitter is applied later to make each schedule unique.
- */
+type MentorMappingRow = {
+    course_id: number;
+    mentor_id: number;
+    mentor_name: string;
+};
+
 interface PriceBracket {
-    inr: number; usd: number; cad: number; aud: number; sgd: number; eur: number;
-    discountPct: number; // percent off (applies to all currencies)
+    inr: number;
+    usd: number;
+    cad: number;
+    aud: number;
+    sgd: number;
+    eur: number;
+    discountPct: number;
 }
 
-// Prices are the BASE (original) prices. finalPrice = price * (1 - discountPct/100)
+const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
 const typePricing: Record<string, PriceBracket> = {
     'AGILE': { inr: 28000, usd: 550, cad: 700, aud: 780, sgd: 680, eur: 490, discountPct: 20 },
     'SAFE': { inr: 35000, usd: 700, cad: 890, aud: 990, sgd: 850, eur: 620, discountPct: 15 },
@@ -41,7 +42,6 @@ const typePricing: Record<string, PriceBracket> = {
     'OTHERS': { inr: 23000, usd: 450, cad: 570, aud: 635, sgd: 549, eur: 409, discountPct: 16 },
 };
 
-// ── Build pricing array ────────────────────────────────────────────────────
 const jitter = (base: number) => Math.round(base * (0.90 + Math.random() * 0.20) / 100) * 100;
 
 const buildPricing = (bracket: PriceBracket) => {
@@ -61,20 +61,17 @@ const buildPricing = (bracket: PriceBracket) => {
     ];
 };
 
-// ── Time slots ─────────────────────────────────────────────────────────────
 const timeSlots = [
-    { start: '09:00', end: '13:00' },  // Morning
-    { start: '10:00', end: '14:00' },  // Morning-2
-    { start: '14:00', end: '18:00' },  // Afternoon
-    { start: '19:00', end: '23:00' },  // Evening
-    { start: '06:00', end: '10:00' },  // Early morning
+    { start: '09:00', end: '13:00' },
+    { start: '10:00', end: '14:00' },
+    { start: '14:00', end: '18:00' },
+    { start: '19:00', end: '23:00' },
+    { start: '06:00', end: '10:00' },
 ];
-const batchTypes = ['WEEKEND', 'WEEKDAY', 'FAST TRACK'];
-const languages = ['English', 'English', 'English', 'Hindi']; // Weighted: 3:1 English
 
-// ── Schedule count distribution ───────────────────────────────────────────
-// We'll cycle through [4, 3, 2, 1] in a pattern so we get a natural distribution
-// Course index:  mod 8 → 0: 4 schedules, 1-2: 3, 3-5: 2, 6-7: 1
+const batchTypes = ['WEEKEND', 'WEEKDAY', 'FAST TRACK'];
+const languages = ['English', 'English', 'English', 'Hindi'];
+
 const scheduleCount = (idx: number): number => {
     const r = idx % 9;
     if (r === 0) return 4;
@@ -83,71 +80,86 @@ const scheduleCount = (idx: number): number => {
     return 1;
 };
 
-// ── Helper: add days ──────────────────────────────────────────────────────
 const addDays = (base: Date, days: number): Date =>
     new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
 
 const dateStr = (d: Date) => d.toISOString().split('T')[0];
 
-// ── Course type map built from seedCourses data ──────────────────────────
-// We'll look this up from DB service type join — instead we'll just map by
-// order since serviceTypes were inserted in fixed order from seedCourses.
-// The courseController.getCountryRegion already handles 6 regions correctly.
-
-// ── Main Seed ─────────────────────────────────────────────────────────────
 const seedSchedules = async () => {
     try {
         console.log('✓ Starting Course Schedule Seeding...');
 
-        // Clear schedules & registrations
-        await db.execute(sql`TRUNCATE TABLE registrations, course_schedules RESTART IDENTITY CASCADE`);
+        await db.execute(sql`TRUNCATE TABLE cart_items, registrations, course_schedules RESTART IDENTITY CASCADE`);
         console.log('✓ Cleared existing schedules and registrations');
 
-        // Fetch all courses with their service type
-        const allCourses = await db.execute<{ id: number; name: string; service_type_name: string }>(sql`
+        const allCourses = await db.execute<CourseRow>(sql`
             SELECT c.id, c.name, st.name AS service_type_name
             FROM courses c
             LEFT JOIN service_types st ON st.id = c.service_type_id
             ORDER BY c.id
         `);
 
-        const courseRows = allCourses.rows as { id: number; name: string; service_type_name: string }[];
+        const mappedMentors = await db.execute<MentorMappingRow>(sql`
+            SELECT mcm.course_id, m.id AS mentor_id, m.name AS mentor_name
+            FROM mentor_course_mappings mcm
+            INNER JOIN mentors m ON m.id = mcm.mentor_id
+            WHERE m.is_active = true
+            ORDER BY mcm.course_id, m.id
+        `);
+
+        const courseRows = allCourses.rows as CourseRow[];
+        const mentorRows = mappedMentors.rows as MentorMappingRow[];
 
         if (courseRows.length === 0) {
             console.error('No courses found. Please run seedCourses first.');
             process.exit(1);
         }
 
-        console.log(`Found ${courseRows.length} courses. Building schedules...`);
+        if (mentorRows.length === 0) {
+            console.error('No mentor mappings found. Please run seedMentors first.');
+            process.exit(1);
+        }
 
-        const schedulesToInsert: any[] = [];
+        const mentorsByCourse = new Map<number, MentorMappingRow[]>();
+        mentorRows.forEach((row) => {
+            const existing = mentorsByCourse.get(row.course_id) || [];
+            existing.push(row);
+            mentorsByCourse.set(row.course_id, existing);
+        });
+
+        const coursesWithoutMentors = courseRows.filter((course) => !(mentorsByCourse.get(course.id) || []).length);
+        if (coursesWithoutMentors.length > 0) {
+            console.error(`Found ${coursesWithoutMentors.length} courses without mentor mappings. Please rerun seedMentors.`);
+            process.exit(1);
+        }
+
+        console.log(`Found ${courseRows.length} courses with mentor mappings. Building schedules...`);
+
+        const schedulesToInsert: Array<typeof courseSchedules.$inferInsert> = [];
         const now = new Date();
-        // Start offset pool — spread first schedules across 7→90 days from now
         const startOffsetPool = [7, 14, 21, 28, 35, 42, 56, 70, 90];
 
         courseRows.forEach((course, idx) => {
             const count = scheduleCount(idx);
             const bracket = typePricing[course.service_type_name] || typePricing['OTHERS'];
+            const mentorPool = mentorsByCourse.get(course.id) || [];
 
-            for (let s = 0; s < count; s++) {
-                // Each schedule is spaced ~45-90 days apart from the previous one for the same course
+            for (let s = 0; s < count; s += 1) {
                 const baseOffset = startOffsetPool[idx % startOffsetPool.length] + s * (45 + Math.floor(Math.random() * 45));
                 const startDate = addDays(now, baseOffset);
-                // Duration: 2–5 days based on course type complexity
                 const duration = s % 3 === 0 ? 4 : s % 3 === 1 ? 3 : 2;
                 const endDate = addDays(startDate, duration);
-
                 const slot = pick(timeSlots);
                 const batchType = pick(batchTypes);
                 const language = pick(languages);
                 const pricing = buildPricing(bracket);
-                const mentor = pick(mentorPool);
+                const mentor = mentorPool[(idx + s) % mentorPool.length];
                 const capacity = [20, 25, 30, 40, 50][idx % 5];
                 const filled = Math.floor(Math.random() * capacity * 0.75);
 
                 schedulesToInsert.push({
                     courseId: course.id,
-                    mentor,
+                    mentorId: mentor.mentor_id,
                     startDate: dateStr(startDate),
                     endDate: dateStr(endDate),
                     startTime: slot.start,
@@ -156,18 +168,19 @@ const seedSchedules = async () => {
                     batchType,
                     courseType: 'ONLINE',
                     language,
-                    planAvailable: s % 2 === 0, // Alternate for testing
+                    planAvailable: s % 2 === 0,
                     isActive: true,
                     maxParticipants: capacity,
                     enrollmentCount: filled,
                     capacityRemaining: capacity - filled,
+                    description: `${course.name} led by ${mentor.mentor_name} in a live instructor-led batch.`,
+                    duration,
                 });
             }
         });
 
         console.log(`Total schedules to insert: ${schedulesToInsert.length}`);
 
-        // Insert in chunks of 50
         const chunkSize = 50;
         for (let i = 0; i < schedulesToInsert.length; i += chunkSize) {
             const chunk = schedulesToInsert.slice(i, i + chunkSize);
@@ -175,16 +188,16 @@ const seedSchedules = async () => {
             console.log(`  ↳ Inserted ${Math.min(i + chunkSize, schedulesToInsert.length)}/${schedulesToInsert.length}`);
         }
 
-        // Summary
         const counts = courseRows.map((_, i) => scheduleCount(i));
         const total = counts.reduce((a, b) => a + b, 0);
-        const dist = { 1: 0, 2: 0, 3: 0, 4: 0 };
-        counts.forEach(c => { (dist as any)[c]++; });
-        console.log('\n✅ Seeding complete!');
+        const distribution = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        counts.forEach((countValue) => { (distribution as any)[countValue] += 1; });
+
+        console.log('\n✅ Schedule seeding complete!');
         console.log(`   Courses: ${courseRows.length}`);
         console.log(`   Total schedules: ${total}`);
-        console.log(`   Distribution → 4 schedules: ${dist[4]}, 3: ${dist[3]}, 2: ${dist[2]}, 1: ${dist[1]}`);
-        console.log(`   Countries covered: India (INR), USA (USD), Canada (CAD), Australia (AUD), Singapore (SGD), Europe (EUR)`);
+        console.log(`   Distribution → 4 schedules: ${distribution[4]}, 3: ${distribution[3]}, 2: ${distribution[2]}, 1: ${distribution[1]}`);
+        console.log('   Mentors used: only mapped mentors from mentor_course_mappings');
 
         process.exit(0);
     } catch (error) {

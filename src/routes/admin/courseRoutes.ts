@@ -18,6 +18,8 @@ router.get('/', courseController.getAllCourses);
 router.post('/import', upload.single('file'), courseController.importCourses);
 // Course actions
 router.get('/service-types', courseController.getAllServiceTypes);
+router.get('/catalog', courseController.getCourseCatalog);
+router.get('/catalog/:courseId/mentors', courseController.getMentorsByCourse);
 router.get('/:courseId', courseController.getCourseById);
 router.put('/:courseId', uploadBrochure.single('brochure'), courseController.updateCourse);
 router.delete('/:courseId', courseController.deleteCourse);

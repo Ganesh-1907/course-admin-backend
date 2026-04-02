@@ -6,6 +6,7 @@ import {
   registrations,
   courseSchedules,
   courses,
+  mentors,
   users,
   serviceTypes
 } from '../../models';
@@ -79,13 +80,14 @@ export const getAllRegistrations = asyncHandler(async (req: CustomRequest, res: 
     mobile: users.mobile,
     courseId: courseSchedules.id,
     courseName: courses.name,
-    mentor: courseSchedules.mentor,
+    mentor: mentors.name,
     startDate: courseSchedules.startDate,
   })
     .from(registrations)
     .innerJoin(users, eq(registrations.userId, users.id))
     .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .where(whereClause)
     .limit(pageLimit)
     .offset(skip)
@@ -96,6 +98,7 @@ export const getAllRegistrations = asyncHandler(async (req: CustomRequest, res: 
     .innerJoin(users, eq(registrations.userId, users.id))
     .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .where(whereClause);
 
   const total = Number(countResults[0].count);
@@ -128,12 +131,14 @@ export const getRegistrationDetail = asyncHandler(async (req: CustomRequest, res
     registration: registrations,
     user: users,
     schedule: courseSchedules,
-    course: courses
+    course: courses,
+    mentor: mentors,
   })
     .from(registrations)
     .innerJoin(users, eq(registrations.userId, users.id))
     .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .where(eq(registrations.id, registrationId))
     .limit(1);
 
@@ -141,7 +146,7 @@ export const getRegistrationDetail = asyncHandler(async (req: CustomRequest, res
     throw new AppError(404, 'Registration not found');
   }
 
-  const { registration, user, schedule, course } = results[0];
+  const { registration, user, schedule, course, mentor } = results[0];
   const combined = {
     ...registration,
     userName: user.name,
@@ -149,7 +154,18 @@ export const getRegistrationDetail = asyncHandler(async (req: CustomRequest, res
     mobile: user.mobile,
     courseId: schedule.id,
     courseName: course.name,
-    mentor: schedule.mentor,
+    mentor: mentor.name,
+    mentorId: mentor.id,
+    mentorProfile: {
+      id: mentor.id,
+      name: mentor.name,
+      specialization: mentor.specialization,
+      designation: mentor.designation,
+      rating: mentor.rating ? Number(mentor.rating) : null,
+      yearsOfExperience: mentor.yearsOfExperience,
+      linkedinId: mentor.linkedinId,
+      photoUrl: mentor.photoUrl,
+    },
     startDate: schedule.startDate,
     endDate: schedule.endDate,
     batchType: schedule.batchType,

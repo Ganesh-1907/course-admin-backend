@@ -1,73 +1,179 @@
 import { Response } from 'express';
-import XLSX from 'xlsx';
 import { CustomRequest } from '../../types/common';
 import {
   db,
   courses,
   courseSchedules,
+  mentors,
+  mentorCourseMappings,
   serviceTypes,
-  users
 } from '../../models';
 import {
   eq,
   and,
   ilike,
   or,
-  sql,
   desc,
-  asc
+  asc,
+  count,
 } from 'drizzle-orm';
-import {
-  calculateFinalPrice,
-  paginate,
-  formatResponse,
-} from '../../utils/helpers';
+import { paginate, formatResponse } from '../../utils/helpers';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
 
-const findCourseByParam = async (id: string | number) => {
-  const courseId = typeof id === 'string' ? parseInt(id, 10) : id;
+const DEFAULT_MENTOR_PHOTO_URL = 'https://course-management-assets.s3.ap-south-1.amazonaws.com/mentors/default-mentor.jpg';
 
-  if (isNaN(courseId)) return null;
+const scheduleSelectFields = {
+  scheduleId: courseSchedules.id,
+  courseId: courses.id,
+  courseName: courses.name,
+  serviceType: serviceTypes.name,
+  mentorId: mentors.id,
+  mentorName: mentors.name,
+  mentorSpecialization: mentors.specialization,
+  mentorDesignation: mentors.designation,
+  mentorDescription: mentors.description,
+  mentorRating: mentors.rating,
+  mentorYearsOfExperience: mentors.yearsOfExperience,
+  mentorLinkedinId: mentors.linkedinId,
+  mentorPhotoUrl: mentors.photoUrl,
+  startDate: courseSchedules.startDate,
+  endDate: courseSchedules.endDate,
+  startTime: courseSchedules.startTime,
+  endTime: courseSchedules.endTime,
+  batchType: courseSchedules.batchType,
+  courseType: courseSchedules.courseType,
+  address: courseSchedules.address,
+  language: courseSchedules.language,
+  description: courseSchedules.description,
+  difficultyLevel: courseSchedules.difficultyLevel,
+  duration: courseSchedules.duration,
+  brochureUrl: courseSchedules.brochureUrl,
+  pricing: courseSchedules.pricing,
+  maxParticipants: courseSchedules.maxParticipants,
+  capacityRemaining: courseSchedules.capacityRemaining,
+  enrollmentCount: courseSchedules.enrollmentCount,
+  planAvailable: courseSchedules.planAvailable,
+  isActive: courseSchedules.isActive,
+  createdAt: courseSchedules.createdAt,
+  updatedAt: courseSchedules.updatedAt,
+};
 
-  const results = await db.select()
+const parseOptionalBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return undefined;
+  if (value.toLowerCase() === 'true') return true;
+  if (value.toLowerCase() === 'false') return false;
+  return undefined;
+};
+
+const parsePricingPayload = (value: unknown) => {
+  if (typeof value === 'string') {
+    return JSON.parse(value);
+  }
+  return value;
+};
+
+const mapScheduleRow = (row: any) => ({
+  id: row.scheduleId,
+  courseId: row.courseId,
+  courseName: row.courseName,
+  serviceType: row.serviceType,
+  mentorId: row.mentorId,
+  mentor: row.mentorName,
+  mentorProfile: {
+    id: row.mentorId,
+    name: row.mentorName,
+    specialization: row.mentorSpecialization,
+    designation: row.mentorDesignation,
+    description: row.mentorDescription,
+    rating: row.mentorRating !== null && row.mentorRating !== undefined ? Number(row.mentorRating) : null,
+    yearsOfExperience: row.mentorYearsOfExperience,
+    linkedinId: row.mentorLinkedinId,
+    photoUrl: row.mentorPhotoUrl || DEFAULT_MENTOR_PHOTO_URL,
+  },
+  startDate: row.startDate,
+  endDate: row.endDate,
+  startTime: row.startTime,
+  endTime: row.endTime,
+  batchType: row.batchType,
+  courseType: row.courseType,
+  address: row.address,
+  language: row.language,
+  description: row.description,
+  difficultyLevel: row.difficultyLevel,
+  duration: row.duration,
+  brochureUrl: row.brochureUrl,
+  brochure: row.brochureUrl ? { url: row.brochureUrl } : null,
+  pricing: row.pricing,
+  countryPricing: row.pricing,
+  maxParticipants: row.maxParticipants,
+  capacityRemaining: row.capacityRemaining,
+  enrollmentCount: row.enrollmentCount,
+  planAvailable: row.planAvailable,
+  isActive: row.isActive,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+const getScheduleById = async (scheduleId: number) => {
+  const results = await db.select(scheduleSelectFields)
     .from(courseSchedules)
-    .where(eq(courseSchedules.id, courseId))
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
+    .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .where(eq(courseSchedules.id, scheduleId))
     .limit(1);
 
-  if (results.length > 0) {
-    const { course_schedules, courses: courseMasterData } = results[0];
-    return {
-      ...course_schedules,
-      ...courseMasterData,
-      id: course_schedules.id,
-      countryPricing: course_schedules.pricing // Return as countryPricing for frontend compatibility
-    };
+  if (results.length === 0) {
+    return null;
   }
 
-  return null;
+  return mapScheduleRow(results[0]);
+};
+
+const ensureMentorMappedToCourse = async (courseId: number, mentorId: number) => {
+  const courseResult = await db.select({ id: courses.id })
+    .from(courses)
+    .where(eq(courses.id, courseId))
+    .limit(1);
+
+  if (courseResult.length === 0) {
+    throw new AppError(404, 'Selected course was not found');
+  }
+
+  const mentorResult = await db.select({ id: mentors.id })
+    .from(mentors)
+    .where(eq(mentors.id, mentorId))
+    .limit(1);
+
+  if (mentorResult.length === 0) {
+    throw new AppError(404, 'Selected mentor was not found');
+  }
+
+  const mappingResult = await db.select({ id: mentorCourseMappings.id })
+    .from(mentorCourseMappings)
+    .where(and(
+      eq(mentorCourseMappings.courseId, courseId),
+      eq(mentorCourseMappings.mentorId, mentorId),
+    ))
+    .limit(1);
+
+  if (mappingResult.length === 0) {
+    throw new AppError(400, 'Selected mentor is not mapped to the selected course');
+  }
 };
 
 /**
- * Create Course
+ * Create Course Schedule
  */
 export const createCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
   if (!req.user) {
     throw new AppError(401, 'User not authenticated');
   }
 
-  // Parse pricing if string (from FormData)
-  if (typeof req.body.pricing === 'string') {
-    try {
-      req.body.pricing = JSON.parse(req.body.pricing);
-    } catch (error) {
-      throw new AppError(400, 'Invalid pricing format');
-    }
-  }
-
   const {
     courseId,
-    mentor,
+    mentorId,
     startDate,
     endDate,
     startTime,
@@ -82,27 +188,36 @@ export const createCourse = asyncHandler(async (req: CustomRequest, res: Respons
     maxParticipants,
     pricing,
     countryPricing,
+    isActive,
+    planAvailable,
   } = req.body;
 
-  const finalPricing = countryPricing ? (typeof countryPricing === 'string' ? JSON.parse(countryPricing) : countryPricing) : pricing;
+  const normalizedCourseId = Number(courseId);
+  const normalizedMentorId = Number(mentorId);
+  const finalPricing = countryPricing ? parsePricingPayload(countryPricing) : parsePricingPayload(pricing);
 
-  if (!courseId || !mentor || !startDate || !endDate || !finalPricing) {
+  if (!normalizedCourseId || !normalizedMentorId || !startDate || !endDate || !finalPricing) {
     throw new AppError(400, 'Missing required fields');
+  }
+
+  if (Number.isNaN(normalizedCourseId) || Number.isNaN(normalizedMentorId)) {
+    throw new AppError(400, 'Invalid course or mentor selection');
   }
 
   if (new Date(startDate) >= new Date(endDate)) {
     throw new AppError(400, 'Start date must be before end date');
   }
 
+  await ensureMentorMappedToCourse(normalizedCourseId, normalizedMentorId);
+
   let brochureUrl;
   if (req.file) {
     brochureUrl = `${req.protocol}://${req.get('host')}/uploads/brochures/${req.file.filename}`;
   }
 
-  // Create Course Schedule
-  const newSchedule = await db.insert(courseSchedules).values({
-    courseId: typeof courseId === 'string' ? parseInt(courseId) : courseId,
-    mentor,
+  const [insertedSchedule] = await db.insert(courseSchedules).values({
+    courseId: normalizedCourseId,
+    mentorId: normalizedMentorId,
     startDate: new Date(startDate).toISOString().split('T')[0],
     endDate: new Date(endDate).toISOString().split('T')[0],
     startTime,
@@ -113,31 +228,30 @@ export const createCourse = asyncHandler(async (req: CustomRequest, res: Respons
     language,
     description,
     difficultyLevel,
-    duration: duration ? parseInt(duration as string) : null,
-    maxParticipants: maxParticipants ? parseInt(maxParticipants as string) : null,
-    capacityRemaining: maxParticipants ? parseInt(maxParticipants as string) : null,
-    pricing: finalPricing, // Store the array as JSONB
-    createdBy: req.user.id as unknown as number,
+    duration: duration ? parseInt(String(duration), 10) : null,
+    maxParticipants: maxParticipants ? parseInt(String(maxParticipants), 10) : null,
+    capacityRemaining: maxParticipants ? parseInt(String(maxParticipants), 10) : null,
+    pricing: finalPricing,
+    createdBy: req.user.id,
     brochureUrl,
-  }).returning();
+    isActive: parseOptionalBoolean(isActive) ?? true,
+    planAvailable: parseOptionalBoolean(planAvailable) ?? true,
+  }).returning({ id: courseSchedules.id });
 
-  const schedule = newSchedule[0];
-
+  const schedule = await getScheduleById(insertedSchedule.id);
   const response = formatResponse(true, schedule, 'Course schedule created successfully', 201);
   res.status(201).json(response);
 });
 
 /**
- * Update Course
+ * Update Course Schedule
  */
 export const updateCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
   const { courseId } = req.params;
-  const scheduleId = parseInt(courseId);
+  const scheduleId = parseInt(courseId, 10);
 
-  if (typeof req.body.pricing === 'string') {
-    try {
-      req.body.pricing = JSON.parse(req.body.pricing);
-    } catch (error) { }
+  if (Number.isNaN(scheduleId)) {
+    throw new AppError(400, 'Invalid course schedule ID');
   }
 
   const scheduleResults = await db.select()
@@ -150,68 +264,99 @@ export const updateCourse = asyncHandler(async (req: CustomRequest, res: Respons
   }
 
   const currentSchedule = scheduleResults[0];
+  const nextCourseId = req.body.courseId ? parseInt(String(req.body.courseId), 10) : currentSchedule.courseId;
+  const nextMentorId = req.body.mentorId ? parseInt(String(req.body.mentorId), 10) : currentSchedule.mentorId;
 
-  if (req.body.startDate || req.body.endDate) {
-    const startDate = new Date(req.body.startDate || currentSchedule.startDate);
-    const endDate = new Date(req.body.endDate || currentSchedule.endDate);
-    if (startDate >= endDate) {
-      throw new AppError(400, 'Start date must be before end date');
-    }
+  if (Number.isNaN(nextCourseId) || Number.isNaN(nextMentorId)) {
+    throw new AppError(400, 'Invalid course or mentor selection');
   }
+
+  const startDate = new Date(req.body.startDate || currentSchedule.startDate);
+  const endDate = new Date(req.body.endDate || currentSchedule.endDate);
+  if (startDate >= endDate) {
+    throw new AppError(400, 'Start date must be before end date');
+  }
+
+  await ensureMentorMappedToCourse(nextCourseId, nextMentorId);
 
   let brochureUrl = currentSchedule.brochureUrl;
   if (req.file) {
     brochureUrl = `${req.protocol}://${req.get('host')}/uploads/brochures/${req.file.filename}`;
   }
 
-  const updateData: any = { ...req.body, brochureUrl };
+  const updateData: Record<string, any> = {
+    updatedAt: new Date(),
+    brochureUrl,
+  };
 
-  // Format numeric/date fields
-  if (updateData.startDate) updateData.startDate = new Date(updateData.startDate).toISOString().split('T')[0];
-  if (updateData.endDate) updateData.endDate = new Date(updateData.endDate).toISOString().split('T')[0];
-  if (updateData.duration) updateData.duration = parseInt(updateData.duration);
-  if (updateData.maxParticipants) updateData.maxParticipants = parseInt(updateData.maxParticipants);
-  if (updateData.courseId) updateData.courseId = parseInt(updateData.courseId);
+  if (req.body.courseId !== undefined) updateData.courseId = nextCourseId;
+  if (req.body.mentorId !== undefined) updateData.mentorId = nextMentorId;
+  if (req.body.startDate) updateData.startDate = startDate.toISOString().split('T')[0];
+  if (req.body.endDate) updateData.endDate = endDate.toISOString().split('T')[0];
+  if (req.body.startTime !== undefined) updateData.startTime = req.body.startTime;
+  if (req.body.endTime !== undefined) updateData.endTime = req.body.endTime;
+  if (req.body.batchType !== undefined) updateData.batchType = req.body.batchType;
+  if (req.body.courseType !== undefined) updateData.courseType = req.body.courseType;
+  if (req.body.address !== undefined) updateData.address = req.body.address;
+  if (req.body.language !== undefined) updateData.language = req.body.language;
+  if (req.body.description !== undefined) updateData.description = req.body.description;
+  if (req.body.difficultyLevel !== undefined) updateData.difficultyLevel = req.body.difficultyLevel;
+  if (req.body.duration !== undefined) updateData.duration = req.body.duration ? parseInt(String(req.body.duration), 10) : null;
+  if (req.body.maxParticipants !== undefined) updateData.maxParticipants = req.body.maxParticipants ? parseInt(String(req.body.maxParticipants), 10) : null;
 
-  // Handle pricing alias
-  if (updateData.countryPricing) {
-    updateData.pricing = typeof updateData.countryPricing === 'string'
-      ? JSON.parse(updateData.countryPricing)
-      : updateData.countryPricing;
-    delete updateData.countryPricing;
+  const parsedIsActive = parseOptionalBoolean(req.body.isActive);
+  if (parsedIsActive !== undefined) updateData.isActive = parsedIsActive;
+
+  const parsedPlanAvailable = parseOptionalBoolean(req.body.planAvailable);
+  if (parsedPlanAvailable !== undefined) updateData.planAvailable = parsedPlanAvailable;
+
+  if (req.body.countryPricing !== undefined || req.body.pricing !== undefined) {
+    updateData.pricing = req.body.countryPricing !== undefined
+      ? parsePricingPayload(req.body.countryPricing)
+      : parsePricingPayload(req.body.pricing);
   }
 
   await db.update(courseSchedules)
     .set(updateData)
     .where(eq(courseSchedules.id, scheduleId));
 
-  const response = formatResponse(true, null, 'Course schedule updated successfully', 200);
+  const schedule = await getScheduleById(scheduleId);
+  const response = formatResponse(true, schedule, 'Course schedule updated successfully', 200);
   res.status(200).json(response);
 });
 
 /**
- * Get All Courses
+ * Get All Course Schedules
  */
 export const getAllCourses = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { page = 1, limit = 25, search, serviceType, batchType, courseType, sortBy = 'courseId', order = 'ASC' } = req.query;
+  const {
+    page = 1,
+    limit = 25,
+    search,
+    serviceType,
+    batchType,
+    courseType,
+    sortBy = 'courseId',
+    order = 'ASC',
+  } = req.query;
+
   const { skip, limit: pageLimit, page: pageNum } = paginate(
-    parseInt(page as string),
-    parseInt(limit as string)
+    parseInt(page as string, 10),
+    parseInt(limit as string, 10),
   );
 
-  let whereClause = undefined;
   const conditions = [];
 
   if (search) {
     const searchStr = `%${search}%`;
     conditions.push(or(
       ilike(courses.name, searchStr),
-      ilike(courseSchedules.mentor, searchStr)
+      ilike(mentors.name, searchStr),
     ));
   }
 
   if (serviceType && serviceType !== 'All Types') {
-    conditions.push(ilike(serviceTypes.name, serviceType as string));
+    conditions.push(ilike(serviceTypes.name, String(serviceType)));
   }
 
   if (batchType && batchType !== 'All' && batchType !== 'All Batches') {
@@ -222,65 +367,59 @@ export const getAllCourses = asyncHandler(async (req: CustomRequest, res: Respon
     conditions.push(ilike(courseSchedules.courseType, `%${courseType}%`));
   }
 
-  if (conditions.length > 0) {
-    whereClause = and(...conditions);
-  }
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  // Determine sorting column
   let orderColumn: any = courseSchedules.id;
   if (sortBy === 'createdAt') orderColumn = courseSchedules.createdAt;
-  if (sortBy === 'mentor') orderColumn = courseSchedules.mentor;
+  if (sortBy === 'mentor') orderColumn = mentors.name;
   if (sortBy === 'courseName') orderColumn = courses.name;
 
-  const results = await db.select({
-    id: courseSchedules.id,
-    courseName: courses.name,
-    serviceType: serviceTypes.name,
-    batchType: courseSchedules.batchType,
-    courseType: courseSchedules.courseType,
-    isActive: courseSchedules.isActive,
-  })
+  const rows = await db.select(scheduleSelectFields)
     .from(courseSchedules)
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
     .where(whereClause)
     .limit(pageLimit)
     .offset(skip)
     .orderBy(order === 'DESC' ? desc(orderColumn) : asc(orderColumn));
 
-  const totalResults = await db.select({ count: sql<number>`count(*)` })
+  const totalResults = await db.select({ count: count() })
     .from(courseSchedules)
     .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
     .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
     .where(whereClause);
-
-  const total = Number(totalResults[0].count);
 
   const response = formatResponse(
     true,
     {
-      courses: results,
+      courses: rows.map(mapScheduleRow),
       pagination: {
         page: pageNum,
         limit: pageLimit,
-        total,
-        pages: Math.ceil(total / pageLimit),
+        total: Number(totalResults[0].count),
+        pages: Math.ceil(Number(totalResults[0].count) / pageLimit),
       },
     },
     'Courses retrieved successfully',
-    200
+    200,
   );
 
   res.status(200).json(response);
 });
 
 /**
- * Get Course By ID
+ * Get Course Schedule By ID
  */
 export const getCourseById = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { courseId } = req.params;
-  const scheduleId = parseInt(courseId);
-  const course = await findCourseByParam(scheduleId);
+  const scheduleId = parseInt(req.params.courseId, 10);
+
+  if (Number.isNaN(scheduleId)) {
+    throw new AppError(400, 'Invalid course schedule ID');
+  }
+
+  const course = await getScheduleById(scheduleId);
 
   if (!course) {
     throw new AppError(404, 'Course not found');
@@ -291,11 +430,14 @@ export const getCourseById = asyncHandler(async (req: CustomRequest, res: Respon
 });
 
 /**
- * Delete Course
+ * Delete Course Schedule
  */
 export const deleteCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { courseId } = req.params;
-  const scheduleId = parseInt(courseId);
+  const scheduleId = parseInt(req.params.courseId, 10);
+
+  if (Number.isNaN(scheduleId)) {
+    throw new AppError(400, 'Invalid course schedule ID');
+  }
 
   await db.delete(courseSchedules).where(eq(courseSchedules.id, scheduleId));
 
@@ -304,18 +446,28 @@ export const deleteCourse = asyncHandler(async (req: CustomRequest, res: Respons
 });
 
 /**
- * Activate/Deactivate Course
+ * Activate/Deactivate Course Schedule
  */
 export const activateCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { courseId } = req.params;
-  await db.update(courseSchedules).set({ isActive: true }).where(eq(courseSchedules.id, parseInt(courseId)));
+  const scheduleId = parseInt(req.params.courseId, 10);
+
+  if (Number.isNaN(scheduleId)) {
+    throw new AppError(400, 'Invalid course schedule ID');
+  }
+
+  await db.update(courseSchedules).set({ isActive: true, updatedAt: new Date() }).where(eq(courseSchedules.id, scheduleId));
   const response = formatResponse(true, null, 'Course activated successfully', 200);
   res.status(200).json(response);
 });
 
 export const deactivateCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { courseId } = req.params;
-  await db.update(courseSchedules).set({ isActive: false }).where(eq(courseSchedules.id, parseInt(courseId)));
+  const scheduleId = parseInt(req.params.courseId, 10);
+
+  if (Number.isNaN(scheduleId)) {
+    throw new AppError(400, 'Invalid course schedule ID');
+  }
+
+  await db.update(courseSchedules).set({ isActive: false, updatedAt: new Date() }).where(eq(courseSchedules.id, scheduleId));
   const response = formatResponse(true, null, 'Course deactivated successfully', 200);
   res.status(200).json(response);
 });
@@ -323,15 +475,71 @@ export const deactivateCourse = asyncHandler(async (req: CustomRequest, res: Res
 /**
  * Import Courses (Placeholder)
  */
-export const importCourses = asyncHandler(async (req: CustomRequest, res: Response) => {
+export const importCourses = asyncHandler(async (_req: CustomRequest, res: Response) => {
   const response = formatResponse(true, null, 'Courses import functionality is currently being refactored', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Get Course Catalog
+ */
+export const getCourseCatalog = asyncHandler(async (_req: CustomRequest, res: Response) => {
+  const results = await db.select({
+    id: courses.id,
+    name: courses.name,
+    serviceType: serviceTypes.name,
+  })
+    .from(courses)
+    .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
+    .orderBy(asc(courses.name));
+
+  const response = formatResponse(true, results, 'Course catalog retrieved successfully', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Get Mentors For Selected Course
+ */
+export const getMentorsByCourse = asyncHandler(async (req: CustomRequest, res: Response) => {
+  const selectedCourseId = parseInt(req.params.courseId, 10);
+
+  if (Number.isNaN(selectedCourseId)) {
+    throw new AppError(400, 'Invalid course ID');
+  }
+
+  const results = await db.select({
+    id: mentors.id,
+    name: mentors.name,
+    specialization: mentors.specialization,
+    designation: mentors.designation,
+    description: mentors.description,
+    rating: mentors.rating,
+    yearsOfExperience: mentors.yearsOfExperience,
+    linkedinId: mentors.linkedinId,
+    photoUrl: mentors.photoUrl,
+  })
+    .from(mentorCourseMappings)
+    .innerJoin(mentors, eq(mentorCourseMappings.mentorId, mentors.id))
+    .where(and(
+      eq(mentorCourseMappings.courseId, selectedCourseId),
+      eq(mentors.isActive, true),
+    ))
+    .orderBy(asc(mentors.name));
+
+  const mentorOptions = results.map((mentor) => ({
+    ...mentor,
+    rating: mentor.rating !== null && mentor.rating !== undefined ? Number(mentor.rating) : null,
+    photoUrl: mentor.photoUrl || DEFAULT_MENTOR_PHOTO_URL,
+  }));
+
+  const response = formatResponse(true, mentorOptions, 'Mentors retrieved successfully', 200);
   res.status(200).json(response);
 });
 
 /**
  * Get All Service Types
  */
-export const getAllServiceTypes = asyncHandler(async (req: CustomRequest, res: Response) => {
+export const getAllServiceTypes = asyncHandler(async (_req: CustomRequest, res: Response) => {
   const results = await db.select({
     id: serviceTypes.id,
     name: serviceTypes.name,
@@ -341,5 +549,3 @@ export const getAllServiceTypes = asyncHandler(async (req: CustomRequest, res: R
   const response = formatResponse(true, results, 'Service types retrieved successfully', 200);
   res.status(200).json(response);
 });
-
-// Import courses logic would need similar normalization... leaving for now as user asked for schema first.

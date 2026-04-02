@@ -11,9 +11,10 @@
     "prod": "npm run clean && npm run build && npm start",
     "seed:admins": "ts-node -r tsconfig-paths/register src/scripts/seedAdmins.ts",
     "seed:courses": "ts-node -r tsconfig-paths/register src/scripts/seedCourses.ts",
+    "seed:mentors": "ts-node -r tsconfig-paths/register src/scripts/seedMentors.ts",
     "seed:schedules": "ts-node -r tsconfig-paths/register src/scripts/seedSchedules.ts",
     "seed:registrations": "ts-node -r tsconfig-paths/register src/scripts/seedRegistrations.ts",
-    "seed:all": "npm run seed:admins && npm run seed:courses && npm run seed:schedules && npm run seed:registrations",
+    "seed:all": "npm run seed:admins && npm run seed:courses && npm run seed:mentors && npm run seed:schedules && npm run seed:registrations",
     "drizzle:migrate": "drizzle-kit push",
     "drizzle:generate": "drizzle-kit introspect",
     "drizzle:studio": "drizzle-kit studio"
