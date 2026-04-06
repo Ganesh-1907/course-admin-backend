@@ -42,6 +42,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8081',
   'http://localhost:8082',
   'http://localhost:5173',
+  'https://course-frontend-ebon.vercel.app/',
   config.CORS_ORIGIN
 ].filter(Boolean);
 
