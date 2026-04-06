@@ -329,6 +329,7 @@ export const searchCourses = asyncHandler(async (req: CustomRequest, res: Respon
 export const getCoursesByType = asyncHandler(async (req: CustomRequest, res: Response) => {
   const { serviceType } = req.params;
   const { page = 1, limit = 25 } = req.query;
+  const normalizedServiceType = serviceType.replace(/-/g, ' ');
 
   const { skip, limit: pageLimit, page: pageNum } = paginate(
     parseInt(page as string, 10),
@@ -336,7 +337,10 @@ export const getCoursesByType = asyncHandler(async (req: CustomRequest, res: Res
   );
 
   const whereClause = and(
-    eq(serviceTypes.name, serviceType),
+    or(
+      ilike(serviceTypes.name, serviceType),
+      ilike(serviceTypes.name, normalizedServiceType),
+    ),
     eq(courseSchedules.isActive, true),
   );
 
@@ -703,12 +707,15 @@ export const getSchedulesByServiceType = asyncHandler(async (req: CustomRequest,
 
   const region = getCountryRegion(req);
   const today = new Date().toISOString().split('T')[0];
-  const searchTerm = serviceType.replace(/-/g, ' ');
+  const normalizedServiceType = serviceType.replace(/-/g, ' ');
 
   const results = await db.select()
     .from(viewCourseSchedules)
     .where(and(
-      ilike(viewCourseSchedules.serviceTypeName, searchTerm),
+      or(
+        ilike(viewCourseSchedules.serviceTypeName, serviceType),
+        ilike(viewCourseSchedules.serviceTypeName, normalizedServiceType),
+      ),
       eq(viewCourseSchedules.is_active, true),
       sql`${viewCourseSchedules.startDate} >= ${today}`,
     ))

@@ -7,7 +7,7 @@ export interface ICourse extends Document {
   courseName: string;
   description?: string;
   mentor: string;
-  serviceType: 'Agile' | 'Service' | 'SAFe' | 'Project' | 'Quality' | 'Business' | 'Generative AI';
+  serviceType: 'Agile' | 'Service' | 'SAFe' | 'Project' | 'Quality' | 'Business' | 'Generative AI' | 'E-Learning' | 'Combo Courses';
   startDate: Date;
   endDate: Date;
   price: number;

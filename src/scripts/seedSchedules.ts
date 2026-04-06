@@ -34,6 +34,8 @@ const typePricing: Record<string, PriceBracket> = {
     'Microcredentials': { inr: 9900, usd: 199, cad: 249, aud: 279, sgd: 239, eur: 179, discountPct: 10 },
     'DEVOPS': { inr: 25000, usd: 490, cad: 625, aud: 699, sgd: 599, eur: 449, discountPct: 20 },
     'ON DEMAND MICROCREDENTIALS': { inr: 7900, usd: 149, cad: 189, aud: 209, sgd: 185, eur: 139, discountPct: 0 },
+    'E-Learning': { inr: 12900, usd: 249, cad: 319, aud: 349, sgd: 299, eur: 229, discountPct: 10 },
+    'Combo Courses': { inr: 38000, usd: 760, cad: 960, aud: 1060, sgd: 920, eur: 690, discountPct: 18 },
     'SERVICE': { inr: 19000, usd: 370, cad: 470, aud: 530, sgd: 455, eur: 340, discountPct: 15 },
     'QUALITY': { inr: 24000, usd: 470, cad: 595, aud: 660, sgd: 570, eur: 420, discountPct: 18 },
     'CLOUD COMPUTING': { inr: 27000, usd: 530, cad: 670, aud: 749, sgd: 645, eur: 479, discountPct: 20 },
@@ -72,12 +74,27 @@ const timeSlots = [
 const batchTypes = ['WEEKEND', 'WEEKDAY', 'FAST TRACK'];
 const languages = ['English', 'English', 'English', 'Hindi'];
 
-const scheduleCount = (idx: number): number => {
+const scheduleCount = (course: CourseRow, idx: number): number => {
+    if (course.service_type_name === 'Combo Courses') return 2;
+    if (course.service_type_name === 'E-Learning') return idx % 2 === 0 ? 2 : 1;
+
     const r = idx % 9;
     if (r === 0) return 4;
     if (r <= 2) return 3;
     if (r <= 5) return 2;
     return 1;
+};
+
+const buildScheduleDescription = (course: CourseRow, mentorName: string) => {
+    if (course.service_type_name === 'E-Learning') {
+        return `${course.name} supported by ${mentorName} with a self-paced e-learning test schedule.`;
+    }
+
+    if (course.service_type_name === 'Combo Courses') {
+        return `${course.name} guided by ${mentorName} with a bundled combo-course test schedule.`;
+    }
+
+    return `${course.name} led by ${mentorName} in a live instructor-led batch.`;
 };
 
 const addDays = (base: Date, days: number): Date =>
@@ -140,7 +157,7 @@ const seedSchedules = async () => {
         const startOffsetPool = [7, 14, 21, 28, 35, 42, 56, 70, 90];
 
         courseRows.forEach((course, idx) => {
-            const count = scheduleCount(idx);
+            const count = scheduleCount(course, idx);
             const bracket = typePricing[course.service_type_name] || typePricing['OTHERS'];
             const mentorPool = mentorsByCourse.get(course.id) || [];
 
@@ -173,7 +190,7 @@ const seedSchedules = async () => {
                     maxParticipants: capacity,
                     enrollmentCount: filled,
                     capacityRemaining: capacity - filled,
-                    description: `${course.name} led by ${mentor.mentor_name} in a live instructor-led batch.`,
+                    description: buildScheduleDescription(course, mentor.mentor_name),
                     duration,
                 });
             }
@@ -188,7 +205,7 @@ const seedSchedules = async () => {
             console.log(`  ↳ Inserted ${Math.min(i + chunkSize, schedulesToInsert.length)}/${schedulesToInsert.length}`);
         }
 
-        const counts = courseRows.map((_, i) => scheduleCount(i));
+        const counts = courseRows.map((course, i) => scheduleCount(course, i));
         const total = counts.reduce((a, b) => a + b, 0);
         const distribution = { 1: 0, 2: 0, 3: 0, 4: 0 };
         counts.forEach((countValue) => { (distribution as any)[countValue] += 1; });

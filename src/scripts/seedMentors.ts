@@ -71,6 +71,16 @@ const mentorBlueprints: Record<string, MentorBlueprint> = {
         designationPrefix: 'On-demand Learning',
         descriptionFocus: 'self-paced mentoring and outcome-driven digital learning journeys',
     },
+    'E-Learning': {
+        specializations: ['Self-paced Learning', 'Digital Exam Preparation', 'Recorded Video Learning', 'Learning Path Guidance', 'Learner Enablement'],
+        designationPrefix: 'E-Learning',
+        descriptionFocus: 'digital course delivery, learner support, and self-paced certification readiness',
+    },
+    'Combo Courses': {
+        specializations: ['Bundled Certification Paths', 'Accelerated Learning Tracks', 'Cross-functional Upskilling', 'Integrated Exam Preparation'],
+        designationPrefix: 'Combo Course',
+        descriptionFocus: 'multi-course learning journeys and bundled certification support',
+    },
     'SERVICE': {
         specializations: ['ITIL Foundations', 'Service Operations', 'Incident and Problem Management'],
         designationPrefix: 'Service Management',
