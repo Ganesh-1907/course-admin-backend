@@ -9,22 +9,18 @@ import { AppError, asyncHandler } from '../../middleware/errorHandler';
  * Get Cart Items Details
  */
 export const getCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
-  let scheduleIds: number[] = [];
-
-  if (req.user) {
-    // Fetch from database for logged-in user
-    const dbCart = await db.select({
-      scheduleId: cartItems.scheduleId
-    })
-      .from(cartItems)
-      .where(eq(cartItems.userId, req.user.id));
-
-    scheduleIds = dbCart.map(item => item.scheduleId);
-  } else {
-    // Fallback to session for guest
-    const cart = req.session.cart || [];
-    scheduleIds = cart.map(item => typeof item.courseId === 'string' ? parseInt(item.courseId) : item.courseId as number);
+  if (!req.user) {
+    req.session.cart = [];
+    return res.status(200).json(formatResponse(true, [], 'Cart is empty', 200));
   }
+
+  const dbCart = await db.select({
+    scheduleId: cartItems.scheduleId
+  })
+    .from(cartItems)
+    .where(eq(cartItems.userId, req.user.id));
+
+  const scheduleIds = dbCart.map(item => item.scheduleId);
 
   if (scheduleIds.length === 0) {
     return res.status(200).json(formatResponse(true, [], 'Cart is empty', 200));
@@ -60,6 +56,10 @@ export const getCart = asyncHandler(async (req: CustomRequest, res: Response, ne
 export const addToCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { courseId } = req.body; // This is scheduleId
 
+  if (!req.user) {
+    throw new AppError(401, 'Please login to add courses to cart');
+  }
+
   if (!courseId) {
     throw new AppError(400, 'Course schedule ID is required');
   }
@@ -83,43 +83,24 @@ export const addToCart = asyncHandler(async (req: CustomRequest, res: Response, 
 
   const schedule = results[0];
 
-  if (req.user) {
-    // Save to database for logged-in user
-    const existing = await db.select()
-      .from(cartItems)
-      .where(and(
-        eq(cartItems.userId, req.user.id),
-        eq(cartItems.scheduleId, scheduleId)
-      ))
-      .limit(1);
+  // Save to database for logged-in user
+  const existing = await db.select()
+    .from(cartItems)
+    .where(and(
+      eq(cartItems.userId, req.user.id),
+      eq(cartItems.scheduleId, scheduleId)
+    ))
+    .limit(1);
 
-    if (existing.length === 0) {
-      await db.insert(cartItems).values({
-        userId: req.user.id,
-        scheduleId: scheduleId
-      });
-    }
-
-    // Return the updated cart from DB
-    return getCart(req, res, () => { });
-  } else {
-    // Session fallback for guest
-    if (!req.session.cart) {
-      req.session.cart = [];
-    }
-
-    const exists = req.session.cart.find(item => item.courseId === scheduleId);
-    if (!exists) {
-      req.session.cart.push({
-        courseId: schedule.id,
-        courseName: schedule.name,
-        pricing: schedule.pricing
-      });
-    }
-
-    const response = formatResponse(true, req.session.cart, 'Course added to cart', 200);
-    res.status(200).json(response);
+  if (existing.length === 0) {
+    await db.insert(cartItems).values({
+      userId: req.user.id,
+      scheduleId: scheduleId
+    });
   }
+
+  // Return the updated cart from DB
+  return getCart(req, res, () => { });
 });
 
 /**
@@ -128,41 +109,36 @@ export const addToCart = asyncHandler(async (req: CustomRequest, res: Response, 
 export const removeFromCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { courseId } = req.params;
 
+  if (!req.user) {
+    throw new AppError(401, 'Please login to manage cart');
+  }
+
   if (!courseId) {
     throw new AppError(400, 'Course ID is required');
   }
 
   const scheduleId = parseInt(courseId);
 
-  if (req.user) {
-    // Remove from database
-    await db.delete(cartItems)
-      .where(and(
-        eq(cartItems.userId, req.user.id),
-        eq(cartItems.scheduleId, scheduleId)
-      ));
+  // Remove from database
+  await db.delete(cartItems)
+    .where(and(
+      eq(cartItems.userId, req.user.id),
+      eq(cartItems.scheduleId, scheduleId)
+    ));
 
-    return getCart(req, res, next);
-  } else {
-    // Remove from session
-    if (req.session.cart) {
-      req.session.cart = req.session.cart.filter(item => item.courseId !== scheduleId);
-    }
-
-    const response = formatResponse(true, req.session.cart || [], 'Course removed from cart', 200);
-    res.status(200).json(response);
-  }
+  return getCart(req, res, next);
 });
 
 /**
  * Clear Cart
  */
 export const clearCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
-  if (req.user) {
-    await db.delete(cartItems).where(eq(cartItems.userId, req.user.id));
+  if (!req.user) {
+    req.session.cart = [];
+    return res.status(200).json(formatResponse(true, [], 'Cart cleared', 200));
   }
 
-  req.session.cart = [];
+  await db.delete(cartItems).where(eq(cartItems.userId, req.user.id));
   const response = formatResponse(true, [], 'Cart cleared', 200);
   res.status(200).json(response);
 });

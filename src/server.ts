@@ -12,6 +12,8 @@ import { errorHandler } from './middleware/errorHandler';
 import routes from './routes';
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 /**
  * Database Connection
@@ -37,14 +39,8 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // CORS Configuration
-const ALLOWED_ORIGINS = [
-  'http://localhost:8080',
-  'http://localhost:8081',
-  'http://localhost:8082',
-  'http://localhost:5173',
-  'https://course-frontend-ebon.vercel.app/',
-  config.CORS_ORIGIN
-].filter(Boolean);
+const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, '');
+const ALLOWED_ORIGINS = config.CORS_ALLOWED_ORIGINS;
 
 app.use(
   cors({
@@ -52,7 +48,9 @@ app.use(
       // Allow requests with no origin (like mobile apps or curl)
       if (!origin) return callback(null, true);
 
-      if (ALLOWED_ORIGINS.includes(origin)) {
+      const normalizedOrigin = normalizeOrigin(origin);
+
+      if (ALLOWED_ORIGINS.includes(normalizedOrigin)) {
         return callback(null, true);
       }
 
@@ -69,9 +67,11 @@ app.use(
  */
 app.use(
   session({
+    name: 'viovn.sid',
     secret: config.SESSION_SECRET,
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    proxy: config.NODE_ENV === 'production',
     cookie: {
       secure: config.NODE_ENV === 'production',
       httpOnly: true,
@@ -92,7 +92,7 @@ const securityHeaderMiddleware = (req: Request, res: Response, next: NextFunctio
   }
 
   const appToken = req.headers['x-cms-app-token'];
-  if (appToken !== 'CMS-V3-SECURE-ACCESS') {
+  if (appToken !== config.APP_TOKEN) {
     return res.status(403).json({
       success: false,
       message: 'Access denied: Invalid application token',
@@ -138,7 +138,7 @@ app.use(errorHandler);
 /**
  * Server Startup
  */
-const PORT = config.PORT || 5007;
+const PORT = config.PORT;
 
 app.listen(PORT, () => {
   console.log(`
