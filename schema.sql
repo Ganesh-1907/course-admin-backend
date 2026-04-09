@@ -40,7 +40,25 @@ CREATE TABLE courses (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. Mentors Table
+-- 4. Enquiries Table
+CREATE TABLE enquiries (
+    id SERIAL PRIMARY KEY,
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+    course_name VARCHAR(255),
+    message TEXT,
+    enquiry_type VARCHAR(50) DEFAULT 'GENERAL',
+    status VARCHAR(50) DEFAULT 'NEW',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    contacted_at TIMESTAMP WITH TIME ZONE,
+    admin_notes TEXT,
+    education VARCHAR(255)
+);
+
+-- 5. Mentors Table
 CREATE TABLE mentors (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -56,7 +74,23 @@ CREATE TABLE mentors (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 5. Mentor-Course Mapping Table
+-- 6. Webinars Table
+CREATE TABLE webinars (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    webinar_date DATE NOT NULL,
+    poster_url VARCHAR(1024) NOT NULL,
+    location VARCHAR(100) NOT NULL,
+    primary_mentor_id INTEGER NOT NULL REFERENCES mentors(id),
+    secondary_mentor_id INTEGER REFERENCES mentors(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 7. Mentor-Course Mapping Table
 CREATE TABLE mentor_course_mappings (
     id SERIAL PRIMARY KEY,
     mentor_id INTEGER NOT NULL REFERENCES mentors(id) ON DELETE CASCADE,
@@ -66,7 +100,7 @@ CREATE TABLE mentor_course_mappings (
     CONSTRAINT idx_mentor_course_mappings_unique UNIQUE (mentor_id, course_id)
 );
 
--- 6. Course Schedules Table
+-- 8. Course Schedules Table
 CREATE TABLE course_schedules (
     id SERIAL PRIMARY KEY,
     course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
@@ -94,7 +128,7 @@ CREATE TABLE course_schedules (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 7. Registrations Table
+-- 9. Registrations Table
 CREATE TABLE registrations (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -112,7 +146,7 @@ CREATE TABLE registrations (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 8. Cart Items Table
+-- 10. Cart Items Table
 CREATE TABLE cart_items (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -124,8 +158,13 @@ CREATE TABLE cart_items (
 -- Indexes
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_courses_name ON courses(name);
+CREATE INDEX idx_enquiries_email ON enquiries(email);
+CREATE INDEX idx_enquiries_status ON enquiries(status);
 CREATE INDEX idx_mentors_name ON mentors(name);
 CREATE INDEX idx_mentors_specialization ON mentors(specialization);
+CREATE INDEX idx_webinars_webinar_date ON webinars(webinar_date);
+CREATE INDEX idx_webinars_location ON webinars(location);
+CREATE INDEX idx_webinars_primary_mentor_id ON webinars(primary_mentor_id);
 CREATE INDEX idx_mentor_course_mappings_mentor_id ON mentor_course_mappings(mentor_id);
 CREATE INDEX idx_mentor_course_mappings_course_id ON mentor_course_mappings(course_id);
 CREATE INDEX idx_schedules_course_id ON course_schedules(course_id);
