@@ -4,31 +4,60 @@ import { CustomRequest } from '../../types/common';
 import { db, enquiries } from '../../models';
 import { formatResponse } from '../../utils/helpers';
 import { asyncHandler, AppError } from '../../middleware/errorHandler';
+import { sendEnquiryEmail } from '../../utils/emailService';
 
 /**
  * Submit an enquiry
  */
 export const submitEnquiry = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { fullName, email, phoneNumber, education, courseId, courseName, message, enquiryType } = req.body;
+  const { 
+    fullName, 
+    email, 
+    phone, 
+    phoneNumber, 
+    education, 
+    courseId, 
+    courseName, 
+    subject,
+    message, 
+    type, 
+    enquiryType,
+    city 
+  } = req.body;
 
   console.log('[Enquiry] Incoming submission:', req.body);
 
-  if (!fullName || !email || !phoneNumber) {
+  const finalPhone = phone || phoneNumber;
+  if (!fullName || !email || !finalPhone) {
     throw new AppError(400, 'Full name, email and phone number are required');
   }
 
+  const finalEnquiryType = (type || enquiryType || 'GENERAL').toUpperCase();
+  const finalCourseName = courseName || subject;
+  const finalMessage = city ? `City: ${city}. ${message || ''}` : message;
+
   const courseIdInt = (courseId && !isNaN(parseInt(courseId))) ? parseInt(courseId) : null;
 
-  const newEnquiry = await db.insert(enquiries).values({
+  const newEnquiryData = {
     fullName,
     email,
-    phoneNumber,
+    phoneNumber: finalPhone,
     education,
     courseId: courseIdInt,
-    courseName,
-    message,
-    enquiryType: enquiryType || 'GENERAL',
-  }).returning();
+    courseName: finalCourseName,
+    message: finalMessage,
+    enquiryType: finalEnquiryType,
+  };
+
+  const newEnquiry = await db.insert(enquiries).values(newEnquiryData).returning();
+
+  // Send emails
+  try {
+    await sendEnquiryEmail(newEnquiryData);
+  } catch (emailError) {
+    console.error('[Enquiry] Email sending failed:', emailError);
+    // We don't throw here to avoid failing the whole request since DB insert succeeded
+  }
 
   const response = formatResponse(
     true,
