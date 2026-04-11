@@ -199,26 +199,6 @@ export const cartItems = pgTable('cart_items', {
     userIdIdx: index('idx_cart_items_user_id').on(t.userId),
 }));
 
-// 9. Enquiries Table
-export const enquiries = pgTable('enquiries', {
-    id: serial('id').primaryKey(),
-    fullName: varchar('full_name', { length: 255 }).notNull(),
-    email: varchar('email', { length: 255 }).notNull(),
-    phoneNumber: varchar('phone_number', { length: 20 }).notNull(),
-    education: varchar('education', { length: 255 }),
-    courseId: integer('course_id').references(() => courses.id, { onDelete: 'set null' }),
-    courseName: varchar('course_name', { length: 255 }), // Fallback for when courseId is not available
-    message: text('message'),
-    enquiryType: varchar('enquiry_type', { length: 50 }).default('GENERAL'), // CONSULTATION, CORPORATE, ADVISOR, etc.
-    status: varchar('status', { length: 50 }).default('NEW'), // NEW, CONTACTED, CLOSED
-    contactedAt: timestamp('contacted_at', { withTimezone: true }),
-    adminNotes: text('admin_notes'),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-}, (t) => ({
-    emailIdx: index('idx_enquiries_email').on(t.email),
-    statusIdx: index('idx_enquiries_status').on(t.status),
-}));
 
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
@@ -248,12 +228,7 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
     mentorMappings: many(mentorCourseMappings),
 }));
 
-export const enquiriesRelations = relations(enquiries, ({ one }) => ({
-    course: one(courses, {
-        fields: [enquiries.courseId],
-        references: [courses.id],
-    }),
-}));
+
 
 export const mentorsRelations = relations(mentors, ({ many }) => ({
     courseMappings: many(mentorCourseMappings),
