@@ -200,6 +200,44 @@ export const cartItems = pgTable('cart_items', {
 }));
 
 
+// 11. Careers Table
+export const careers = pgTable('careers', {
+    id: serial('id').primaryKey(),
+    title: varchar('title', { length: 255 }).notNull(),
+    department: varchar('department', { length: 100 }).notNull(),
+    location: varchar('location', { length: 100 }).notNull(),
+    type: varchar('type', { length: 50 }).notNull(), // Full-time, Part-time, Remote
+    description: text('description').notNull(),
+    requirements: text('requirements'),
+    responsibilities: text('responsibilities'),
+    salaryRange: varchar('salary_range', { length: 100 }),
+    status: varchar('status', { length: 50 }).default('OPEN'), // OPEN, CLOSED
+    isFeatured: boolean('is_featured').default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+    titleIdx: index('idx_careers_title').on(t.title),
+    statusIdx: index('idx_careers_status').on(t.status),
+}));
+
+// 12. Job Applications Table
+export const jobApplications = pgTable('job_applications', {
+    id: serial('id').primaryKey(),
+    jobId: integer('job_id').notNull().references(() => careers.id, { onDelete: 'cascade' }),
+    fullName: varchar('full_name', { length: 255 }).notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
+    phoneNumber: varchar('phone_number', { length: 20 }).notNull(),
+    resumeUrl: varchar('resume_url', { length: 1024 }).notNull(),
+    coverLetter: text('cover_letter'),
+    status: varchar('status', { length: 50 }).default('PENDING'), // PENDING, REVIEWED, INTERVIEWED, REJECTED, HIRED
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+    jobIdIdx: index('idx_job_apps_job_id').on(t.jobId),
+    emailIdx: index('idx_job_apps_email').on(t.email),
+}));
+
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
     schedulesCreated: many(courseSchedules),

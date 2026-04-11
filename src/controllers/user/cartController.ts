@@ -56,6 +56,8 @@ export const getCart = asyncHandler(async (req: CustomRequest, res: Response, ne
 export const addToCart = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { courseId } = req.body; // This is scheduleId
 
+  console.log(`[Backend API] addToCart called with courseId:`, courseId, 'User authenticated:', !!req.user);
+
   if (!req.user) {
     throw new AppError(401, 'Please login to add courses to cart');
   }
@@ -64,7 +66,17 @@ export const addToCart = asyncHandler(async (req: CustomRequest, res: Response, 
     throw new AppError(400, 'Course schedule ID is required');
   }
 
-  const scheduleId = typeof courseId === 'string' ? parseInt(courseId) : courseId;
+  let scheduleId = typeof courseId === 'string' ? parseInt(courseId) : courseId;
+
+  if (isNaN(scheduleId) && typeof courseId === 'string') {
+    const courseRes = await db.select({ id: courses.id }).from(courses).where(eq(courses.name, courseId)).limit(1);
+    if (courseRes.length > 0) {
+       const recentSch = await db.select({ id: courseSchedules.id }).from(courseSchedules).where(and(eq(courseSchedules.courseId, courseRes[0].id), eq(courseSchedules.isActive, true))).limit(1);
+       if (recentSch.length > 0) {
+          scheduleId = recentSch[0].id;
+       }
+    }
+  }
 
   // Verify course exists
   const results = await db.select({

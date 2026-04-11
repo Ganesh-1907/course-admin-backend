@@ -13,6 +13,8 @@ export const {
     registrations,
     cartItems,
     viewCourseSchedules,
+    careers,
+    jobApplications,
 } = schema;
 
 export { db };

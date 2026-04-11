@@ -31,6 +31,24 @@ export const verifyToken = (req: CustomRequest, res: Response, next: NextFunctio
   }
 };
 
+export const optionalVerifyToken = (req: CustomRequest, res: Response, next: NextFunction): void => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const decoded: any = jwt.verify(token, config.JWT_SECRET);
+      req.user = {
+        id: parseInt(decoded.id, 10),
+        role: decoded.role,
+      };
+    }
+    next();
+  } catch (error) {
+    // If invalid token, proceed without user
+    next();
+  }
+};
+
 export const verifyAdmin = async (
   req: CustomRequest,
   res: Response,

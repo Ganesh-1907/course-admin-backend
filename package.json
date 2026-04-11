@@ -14,7 +14,8 @@
     "seed:mentors": "ts-node -r tsconfig-paths/register src/scripts/seedMentors.ts",
     "seed:schedules": "ts-node -r tsconfig-paths/register src/scripts/seedSchedules.ts",
     "seed:registrations": "ts-node -r tsconfig-paths/register src/scripts/seedRegistrations.ts",
-    "seed:all": "npm run seed:admins && npm run seed:courses && npm run seed:mentors && npm run seed:schedules && npm run seed:registrations",
+    "seed:careers": "ts-node -r tsconfig-paths/register src/scripts/seedCareers.ts",
+    "seed:all": "npm run seed:admins && npm run seed:courses && npm run seed:mentors && npm run seed:schedules && npm run seed:registrations && npm run seed:careers",
     "drizzle:migrate": "drizzle-kit push",
     "drizzle:generate": "drizzle-kit introspect",
     "drizzle:studio": "drizzle-kit studio"

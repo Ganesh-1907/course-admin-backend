@@ -113,9 +113,11 @@ app.use('/api', securityHeaderMiddleware);
 app.use(express.json({ limit: '10mb' })); // Reduced limit for better security
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+
 /**
  * Static Files
  */
+
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 /**
