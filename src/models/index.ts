@@ -12,6 +12,7 @@ export const {
     courseSchedules,
     registrations,
     cartItems,
+    enquiries,
     viewCourseSchedules,
 } = schema;
 
