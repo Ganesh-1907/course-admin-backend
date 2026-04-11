@@ -723,3 +723,18 @@ export const getServiceTypes = asyncHandler(async (_req: CustomRequest, res: Res
   const response = formatResponse(true, results, 'Service types retrieved successfully', 200);
   res.status(200).json(response);
 });
+
+/**
+ * Get All Course Names (for dropdowns)
+ */
+export const getCourseNames = asyncHandler(async (_req: CustomRequest, res: Response) => {
+  const results = await db.select({
+    id: courses.id,
+    name: courses.name,
+  })
+  .from(courses)
+  .orderBy(courses.name);
+
+  const response = formatResponse(true, results, 'Course names retrieved successfully', 200);
+  res.status(200).json(response);
+});
