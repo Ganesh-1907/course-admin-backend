@@ -60,7 +60,28 @@ export const courses = pgTable('courses', {
     nameIdx: index('idx_courses_name').on(t.name),
 }));
 
-// 4. Mentors Table
+// 4. Enquiries Table
+export const enquiries = pgTable('enquiries', {
+    id: serial('id').primaryKey(),
+    fullName: varchar('full_name', { length: 255 }).notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
+    phoneNumber: varchar('phone_number', { length: 20 }).notNull(),
+    courseId: integer('course_id').references(() => courses.id, { onDelete: 'set null' }),
+    courseName: varchar('course_name', { length: 255 }),
+    message: text('message'),
+    enquiryType: varchar('enquiry_type', { length: 50 }).default('GENERAL'),
+    status: varchar('status', { length: 50 }).default('NEW'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+    contactedAt: timestamp('contacted_at', { withTimezone: true }),
+    adminNotes: text('admin_notes'),
+    education: varchar('education', { length: 255 }),
+}, (t) => ({
+    emailIdx: index('idx_enquiries_email').on(t.email),
+    statusIdx: index('idx_enquiries_status').on(t.status),
+}));
+
+// 5. Mentors Table
 export const mentors = pgTable('mentors', {
     id: serial('id').primaryKey(),
     name: varchar('name', { length: 255 }).notNull(),
@@ -79,7 +100,7 @@ export const mentors = pgTable('mentors', {
     specializationIdx: index('idx_mentors_specialization').on(t.specialization),
 }));
 
-// 5. Mentor <-> Course Mapping Table
+// 6. Mentor <-> Course Mapping Table
 export const mentorCourseMappings = pgTable('mentor_course_mappings', {
     id: serial('id').primaryKey(),
     mentorId: integer('mentor_id').notNull().references(() => mentors.id, { onDelete: 'cascade' }),
@@ -92,7 +113,27 @@ export const mentorCourseMappings = pgTable('mentor_course_mappings', {
     mentorCourseUniqueIdx: uniqueIndex('idx_mentor_course_mappings_unique').on(t.mentorId, t.courseId),
 }));
 
-// 6. Course Schedules Table
+// 7. Webinars Table
+export const webinars = pgTable('webinars', {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 255 }).notNull(),
+    description: text('description').notNull(),
+    startTime: time('start_time').notNull(),
+    endTime: time('end_time').notNull(),
+    webinarDate: date('webinar_date').notNull(),
+    posterUrl: varchar('poster_url', { length: 1024 }).notNull(),
+    location: varchar('location', { length: 100 }).notNull(),
+    primaryMentorId: integer('primary_mentor_id').notNull().references(() => mentors.id),
+    secondaryMentorId: integer('secondary_mentor_id').references(() => mentors.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (t) => ({
+    webinarDateIdx: index('idx_webinars_webinar_date').on(t.webinarDate),
+    locationIdx: index('idx_webinars_location').on(t.location),
+    primaryMentorIdx: index('idx_webinars_primary_mentor_id').on(t.primaryMentorId),
+}));
+
+// 8. Course Schedules Table
 export const courseSchedules = pgTable('course_schedules', {
     id: serial('id').primaryKey(),
     courseId: integer('course_id').notNull().references(() => courses.id, { onDelete: 'cascade' }),
@@ -126,7 +167,7 @@ export const courseSchedules = pgTable('course_schedules', {
     mentorIdIdx: index('idx_schedules_mentor_id').on(t.mentorId),
 }));
 
-// 7. Registrations Table
+// 9. Registrations Table
 export const registrations = pgTable('registrations', {
     id: serial('id').primaryKey(),
     userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -147,7 +188,7 @@ export const registrations = pgTable('registrations', {
     scheduleIdIdx: index('idx_registrations_schedule_id').on(t.scheduleId),
 }));
 
-// 8. Cart Items Table
+// 10. Cart Items Table
 export const cartItems = pgTable('cart_items', {
     id: serial('id').primaryKey(),
     userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -202,8 +243,16 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
         fields: [courses.serviceTypeId],
         references: [serviceTypes.id],
     }),
+    enquiries: many(enquiries),
     schedules: many(courseSchedules),
     mentorMappings: many(mentorCourseMappings),
+}));
+
+export const enquiriesRelations = relations(enquiries, ({ one }) => ({
+    course: one(courses, {
+        fields: [enquiries.courseId],
+        references: [courses.id],
+    }),
 }));
 
 export const mentorsRelations = relations(mentors, ({ many }) => ({

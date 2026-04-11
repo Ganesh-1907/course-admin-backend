@@ -4,6 +4,12 @@ import adminCourseRoutes from './admin/courseRoutes';
 import adminRegistrationRoutes from './admin/registrationRoutes';
 import adminDashboardRoutes from './admin/dashboardRoutes';
 import adminEnquiryRoutes from './admin/enquiryRoutes';
+import adminAuthRoutes from './admin/authRoutes';
+import adminCourseRoutes from './admin/courseRoutes';
+import adminMentorRoutes from './admin/mentorRoutes';
+import adminWebinarRoutes from './admin/webinarRoutes';
+import adminRegistrationRoutes from './admin/registrationRoutes';
+import adminDashboardRoutes from './admin/dashboardRoutes';
 import userAuthRoutes from './user/authRoutes';
 import userCourseRoutes from './user/courseRoutes';
 import userRegistrationRoutes from './user/registrationRoutes';
@@ -21,6 +27,12 @@ router.use('/admin/courses', adminCourseRoutes);
 router.use('/admin/registrations', adminRegistrationRoutes);
 router.use('/admin/dashboard', adminDashboardRoutes);
 router.use('/admin/enquiries', adminEnquiryRoutes);
+router.use('/admin/auth', adminAuthRoutes);
+router.use('/admin/courses', adminCourseRoutes);
+router.use('/admin/mentors', adminMentorRoutes);
+router.use('/admin/webinars', adminWebinarRoutes);
+router.use('/admin/registrations', adminRegistrationRoutes);
+router.use('/admin/dashboard', adminDashboardRoutes);
 
 /**
  * User Routes
