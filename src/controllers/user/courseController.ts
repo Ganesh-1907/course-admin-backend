@@ -265,63 +265,7 @@ export const getCourseDetails = asyncHandler(async (req: CustomRequest, res: Res
   res.status(200).json(response);
 });
 
-/**
- * Search Courses
- */
-export const searchCourses = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const { q, page = 1, limit = 25 } = req.query;
 
-  if (!q || (q as string).trim().length < 2) {
-    throw new AppError(400, 'Search query must be at least 2 characters');
-  }
-
-  const { skip, limit: pageLimit, page: pageNum } = paginate(
-    parseInt(page as string, 10),
-    parseInt(limit as string, 10),
-  );
-
-  const searchStr = `%${q}%`;
-  const whereClause = and(
-    eq(courseSchedules.isActive, true),
-    or(
-      ilike(courses.name, searchStr),
-      ilike(mentors.name, searchStr),
-    ),
-  );
-
-  const results = await db.select(scheduleSelectFields)
-    .from(courseSchedules)
-    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
-    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
-    .leftJoin(serviceTypes, eq(courses.serviceTypeId, serviceTypes.id))
-    .where(whereClause)
-    .limit(pageLimit)
-    .offset(skip);
-
-  const countResults = await db.select({ count: count() })
-    .from(courseSchedules)
-    .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
-    .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
-    .where(whereClause);
-
-  const response = formatResponse(
-    true,
-    {
-      courses: results.map(mapCourseCard),
-      query: q,
-      pagination: {
-        page: pageNum,
-        limit: pageLimit,
-        total: Number(countResults[0].count),
-        pages: Math.ceil(Number(countResults[0].count) / pageLimit),
-      },
-    },
-    'Search results retrieved successfully',
-    200,
-  );
-
-  res.status(200).json(response);
-});
 
 /**
  * Get Courses by Type
@@ -777,5 +721,20 @@ export const getServiceTypes = asyncHandler(async (_req: CustomRequest, res: Res
   const results = await db.select().from(serviceTypes).orderBy(serviceTypes.name);
 
   const response = formatResponse(true, results, 'Service types retrieved successfully', 200);
+  res.status(200).json(response);
+});
+
+/**
+ * Get All Course Names (for dropdowns)
+ */
+export const getCourseNames = asyncHandler(async (_req: CustomRequest, res: Response) => {
+  const results = await db.select({
+    id: courses.id,
+    name: courses.name,
+  })
+  .from(courses)
+  .orderBy(courses.name);
+
+  const response = formatResponse(true, results, 'Course names retrieved successfully', 200);
   res.status(200).json(response);
 });

@@ -40,7 +40,7 @@ app.use('/api/', limiter);
 
 // CORS Configuration
 const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, '');
-const ALLOWED_ORIGINS = config.CORS_ALLOWED_ORIGINS;
+const ALLOWED_ORIGINS = config.CORS_ALLOWED_ORIGINS || "*";
 
 app.use(
   cors({
@@ -92,7 +92,11 @@ const securityHeaderMiddleware = (req: Request, res: Response, next: NextFunctio
   }
 
   const appToken = req.headers['x-cms-app-token'];
+  // LOGGING FOR DEBUGGING
+  console.log(`[Security] ${req.method} ${req.originalUrl} - Token: ${appToken}`);
+  
   if (appToken !== config.APP_TOKEN) {
+    console.error(`[Security] Token Mismatch! Received: ${appToken}, Expected: ${config.APP_TOKEN}`);
     return res.status(403).json({
       success: false,
       message: 'Access denied: Invalid application token',
@@ -109,9 +113,11 @@ app.use('/api', securityHeaderMiddleware);
 app.use(express.json({ limit: '10mb' })); // Reduced limit for better security
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+
 /**
  * Static Files
  */
+
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 /**

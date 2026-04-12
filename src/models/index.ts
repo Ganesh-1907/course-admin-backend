@@ -5,12 +5,16 @@ export const {
     users,
     serviceTypes,
     courses,
+    enquiries,
     mentors,
     mentorCourseMappings,
+    webinars,
     courseSchedules,
     registrations,
     cartItems,
     viewCourseSchedules,
+    careers,
+    jobApplications,
 } = schema;
 
 export { db };
