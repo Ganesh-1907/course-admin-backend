@@ -9,6 +9,7 @@ import {
     serviceTypes
 } from '../../models';
 import {
+    asc,
     eq,
     and,
     ilike,
@@ -110,6 +111,13 @@ export const getDashboardStats = asyncHandler(async (req: CustomRequest, res: Re
         .orderBy(sortKeyExpr)
         .limit(12);
 
+    const serviceTypeList = await db.select({
+        id: serviceTypes.id,
+        name: serviceTypes.name,
+    })
+        .from(serviceTypes)
+        .orderBy(asc(serviceTypes.name));
+
     const stats = {
         courses: {
             total: Number(totalCoursesRes[0].count),
@@ -126,7 +134,8 @@ export const getDashboardStats = asyncHandler(async (req: CustomRequest, res: Re
         },
         coursesByType,
         topCourses,
-        registrationsOverTime
+        registrationsOverTime,
+        serviceTypes: serviceTypeList,
     };
 
     const response = formatResponse(true, stats, 'Dashboard statistics retrieved successfully', 200);

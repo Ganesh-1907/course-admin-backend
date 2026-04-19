@@ -5,8 +5,11 @@ import {
     createStripePaymentIntent,
     verifyStripePayment
 } from '../../controllers/user/paymentController';
+import { optionalVerifyToken } from '../../middleware/auth';
 
 const router = express.Router();
+
+router.use(optionalVerifyToken);
 
 /**
  * @route   POST /api/user/payments/create-order
@@ -21,6 +24,7 @@ router.post('/create-order', createRazorpayOrder);
  * @access  Public (Self-handles auth if token provided)
  */
 router.post('/verify-payment', verifyRazorpayPayment);
+router.post('/verify', verifyRazorpayPayment);
 
 // Stripe Routes
 router.post('/stripe/create-intent', createStripePaymentIntent);

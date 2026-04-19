@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { and, asc, count, desc, eq, ilike, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, or } from 'drizzle-orm';
 import { db, mentors, webinars } from '../../models';
 import { AppError, asyncHandler } from '../../middleware/errorHandler';
 import { CustomRequest } from '../../types/common';
@@ -122,6 +122,27 @@ const getMentorDetails = async (mentorId?: number | null) => {
   return mentor || null;
 };
 
+const getMentorLookup = async (mentorIds: Array<number | null | undefined>) => {
+  const uniqueMentorIds = [...new Set(
+    mentorIds.filter((mentorId): mentorId is number => Number.isInteger(mentorId) && mentorId > 0),
+  )];
+
+  if (uniqueMentorIds.length === 0) {
+    return new Map<number, Awaited<ReturnType<typeof getMentorDetails>> extends infer TMentor ? NonNullable<TMentor> : never>();
+  }
+
+  const mentorRows = await db.select({
+    id: mentors.id,
+    name: mentors.name,
+    designation: mentors.designation,
+    specialization: mentors.specialization,
+  })
+    .from(mentors)
+    .where(inArray(mentors.id, uniqueMentorIds));
+
+  return new Map(mentorRows.map((mentor) => [mentor.id, mentor]));
+};
+
 export const createWebinar = asyncHandler(async (req: CustomRequest, res: Response) => {
   const primaryMentorId = parseMentorId(req.body.primaryMentorId, 'Primary mentor');
   const secondaryMentorId = parseOptionalMentorId(req.body.secondaryMentorId);
@@ -210,6 +231,18 @@ export const getAllWebinars = asyncHandler(async (req: CustomRequest, res: Respo
       sortDirection === 'ASC' ? asc(webinars.id) : desc(webinars.id),
     );
 
+  const mentorLookup = await getMentorLookup(
+    webinarRows.flatMap((webinar) => [webinar.primaryMentorId, webinar.secondaryMentorId]),
+  );
+
+  const webinarList = webinarRows.map((webinar) => ({
+    ...webinar,
+    primaryMentor: mentorLookup.get(webinar.primaryMentorId) ?? null,
+    secondaryMentor: webinar.secondaryMentorId
+      ? mentorLookup.get(webinar.secondaryMentorId) ?? null
+      : null,
+  }));
+
   const totalResults = await db.select({ count: count() })
     .from(webinars)
     .where(whereClause);
@@ -217,7 +250,7 @@ export const getAllWebinars = asyncHandler(async (req: CustomRequest, res: Respo
   const response = formatResponse(
     true,
     {
-      webinars: webinarRows,
+      webinars: webinarList,
       pagination: {
         page: pageNum,
         limit: pageLimit,

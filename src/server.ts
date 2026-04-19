@@ -10,6 +10,7 @@ import config from './config/env';
 import { connectDB } from './config/database';
 import { errorHandler } from './middleware/errorHandler';
 import routes from './routes';
+import { handleRazorpayWebhook, handleStripeWebhook } from './controllers/user/paymentController';
 
 const app = express();
 app.disable('x-powered-by');
@@ -80,6 +81,13 @@ app.use(
     },
   })
 );
+
+/**
+ * Payment Webhooks
+ * These routes must receive the raw request body and cannot require the app token header.
+ */
+app.post('/api/user/payments/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+app.post('/api/user/payments/razorpay/webhook', express.raw({ type: 'application/json' }), handleRazorpayWebhook);
 
 /**
  * Custom Security Header Middleware
