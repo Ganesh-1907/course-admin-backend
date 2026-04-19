@@ -97,10 +97,12 @@ export const config = {
   RAZORPAY: {
     KEY_ID: getRequiredEnv('RAZORPAY_KEY_ID'),
     KEY_SECRET: getRequiredEnv('RAZORPAY_KEY_SECRET'),
+    WEBHOOK_SECRET: getOptionalEnv('RAZORPAY_WEBHOOK_SECRET'),
   },
   STRIPE: {
     PUBLISHABLE_KEY: getRequiredEnv('STRIPE_PUBLISHABLE_KEY'),
     SECRET_KEY: getRequiredEnv('STRIPE_SECRET_KEY'),
+    WEBHOOK_SECRET: getOptionalEnv('STRIPE_WEBHOOK_SECRET'),
   },
 };
 
