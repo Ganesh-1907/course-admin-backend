@@ -767,6 +767,11 @@ export const importCourses = asyncHandler(async (req: CustomRequest, res: Respon
     throw new AppError(400, 'No data rows found in the uploaded file');
   }
 
+  const MAX_IMPORT_ROWS = 500;
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new AppError(400, `Import is limited to ${MAX_IMPORT_ROWS} rows at a time`);
+  }
+
   const courseLookup = await db.select({
     id: courses.id,
     name: courses.name,

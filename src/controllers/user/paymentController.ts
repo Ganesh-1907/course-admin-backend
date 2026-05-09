@@ -194,6 +194,33 @@ const resolveCheckoutUser = (
   return mergedUserData;
 };
 
+const calculateTotalAmount = async (scheduleIds: number[], currency = 'INR'): Promise<number> => {
+  if (scheduleIds.length === 0) {
+    throw new AppError(400, 'At least one valid schedule ID is required');
+  }
+
+  const scheduleRows = await db
+    .select({ pricing: courseSchedules.pricing })
+    .from(courseSchedules)
+    .where(inArray(courseSchedules.id, scheduleIds));
+
+  if (scheduleRows.length !== scheduleIds.length) {
+    throw new AppError(404, 'One or more course schedules were not found');
+  }
+
+  let total = 0;
+  for (const row of scheduleRows) {
+    const pricing = row.pricing as any[];
+    const priceEntry = pricing.find((p: any) => p.currency === currency);
+    if (!priceEntry) {
+      throw new AppError(400, `No pricing found for currency ${currency} in schedule`);
+    }
+    total += Number(priceEntry.finalPrice);
+  }
+
+  return total;
+};
+
 const fetchValidSchedules = async (scheduleIds: number[]) => {
   if (scheduleIds.length === 0) {
     throw new AppError(400, 'At least one valid schedule ID is required');
@@ -256,216 +283,230 @@ async function processSuccessfulRegistration(
     throw new AppError(400, 'At least one valid numeric schedule ID is required');
   }
 
-  const existingSchedules = await db
-    .select({ id: courseSchedules.id })
-    .from(courseSchedules)
-    .where(inArray(courseSchedules.id, normalizedScheduleIds));
+  return await db.transaction(async (tx) => {
+    const existingSchedules = await tx
+      .select({ id: courseSchedules.id })
+      .from(courseSchedules)
+      .where(inArray(courseSchedules.id, normalizedScheduleIds));
 
-  if (existingSchedules.length !== normalizedScheduleIds.length) {
-    throw new AppError(404, 'One or more course schedules were not found');
-  }
-
-  let userId: number;
-  let purchaserEmail = '';
-  let purchaserName = 'Learner';
-
-  if (typeof userIdOrData === 'number') {
-    const existingUsers = await db.select().from(users).where(eq(users.id, userIdOrData)).limit(1);
-    const existingUser = existingUsers[0];
-
-    if (!existingUser) {
-      throw new AppError(404, 'User not found for payment confirmation');
+    if (existingSchedules.length !== normalizedScheduleIds.length) {
+      throw new AppError(404, 'One or more course schedules were not found');
     }
 
-    userId = existingUser.id;
-    purchaserEmail = existingUser.email;
-    purchaserName = existingUser.name;
-  } else {
-    const userData = normalizeCheckoutUserData(userIdOrData);
+    let userId: number;
+    let purchaserEmail = '';
+    let purchaserName = 'Learner';
 
-    if (!userData.email) {
-      throw new AppError(400, 'Customer email is required to complete registration');
-    }
-
-    const existingUsers = await db.select().from(users).where(eq(users.email, userData.email)).limit(1);
-
-    if (existingUsers.length > 0) {
+    if (typeof userIdOrData === 'number') {
+      const existingUsers = await tx.select().from(users).where(eq(users.id, userIdOrData)).limit(1);
       const existingUser = existingUsers[0];
+
+      if (!existingUser) {
+        throw new AppError(404, 'User not found for payment confirmation');
+      }
+
       userId = existingUser.id;
       purchaserEmail = existingUser.email;
       purchaserName = existingUser.name;
-
-      const nextMobile = existingUser.mobile || userData.mobile;
-      if (nextMobile && nextMobile !== existingUser.mobile) {
-        await db
-          .update(users)
-          .set({ mobile: nextMobile, updatedAt: new Date() })
-          .where(eq(users.id, existingUser.id));
-      }
     } else {
-      const temporaryPassword = crypto.randomBytes(16).toString('hex');
-      const hashedPassword = await hashPassword(temporaryPassword);
+      const userData = normalizeCheckoutUserData(userIdOrData);
 
-      const [newUser] = await db
-        .insert(users)
+      if (!userData.email) {
+        throw new AppError(400, 'Customer email is required to complete registration');
+      }
+
+      const existingUsers = await tx.select().from(users).where(eq(users.email, userData.email)).limit(1);
+
+      if (existingUsers.length > 0) {
+        const existingUser = existingUsers[0];
+        userId = existingUser.id;
+        purchaserEmail = existingUser.email;
+        purchaserName = existingUser.name;
+
+        const nextMobile = existingUser.mobile || userData.mobile;
+        if (nextMobile && nextMobile !== existingUser.mobile) {
+          await tx
+            .update(users)
+            .set({ mobile: nextMobile, updatedAt: new Date() })
+            .where(eq(users.id, existingUser.id));
+        }
+      } else {
+        const temporaryPassword = crypto.randomBytes(16).toString('hex');
+        const hashedPassword = await hashPassword(temporaryPassword);
+
+        const [newUser] = await tx
+          .insert(users)
+          .values({
+            name: userData.name,
+            email: userData.email,
+            mobile: userData.mobile,
+            password: hashedPassword,
+            role: 'participant',
+          })
+          .returning();
+
+        userId = newUser.id;
+        purchaserEmail = newUser.email;
+        purchaserName = newUser.name;
+      }
+    }
+
+    const createdRegistrations: RegistrationRecord[] = [];
+    const newlyConfirmedRegistrationIds: number[] = [];
+    const splitAmounts = splitAmountAcrossSchedules(amount, normalizedScheduleIds.length);
+
+    for (const [index, scheduleId] of normalizedScheduleIds.entries()) {
+      const paidRegistration = await tx
+        .select()
+        .from(registrations)
+        .where(
+          and(
+            eq(registrations.userId, userId),
+            eq(registrations.scheduleId, scheduleId),
+            eq(registrations.paymentStatus, 'PAID'),
+            ne(registrations.status, 'CANCELLED'),
+          ),
+        )
+        .limit(1);
+
+      if (paidRegistration.length > 0) {
+        createdRegistrations.push(paidRegistration[0]);
+        continue;
+      }
+
+      const pendingRegistration = await tx
+        .select()
+        .from(registrations)
+        .where(
+          and(
+            eq(registrations.userId, userId),
+            eq(registrations.scheduleId, scheduleId),
+            ne(registrations.status, 'CANCELLED'),
+          ),
+        )
+        .limit(1);
+
+      const registrationAmount = splitAmounts[index];
+
+      if (pendingRegistration.length > 0) {
+        const [updatedRegistration] = await tx
+          .update(registrations)
+          .set({
+            paymentId,
+            paymentGateway,
+            amountPaid: registrationAmount.toFixed(2),
+            currency,
+            transactionDate: new Date(),
+            paymentStatus: 'PAID',
+            status: 'CONFIRMED',
+            updatedAt: new Date(),
+            notes: `Payment confirmed via ${paymentGateway.toUpperCase()}`,
+          })
+          .where(eq(registrations.id, pendingRegistration[0].id))
+          .returning();
+
+        createdRegistrations.push(updatedRegistration);
+        newlyConfirmedRegistrationIds.push(updatedRegistration.id);
+        continue;
+      }
+
+      const [newRegistration] = await tx
+        .insert(registrations)
         .values({
-          name: userData.name,
-          email: userData.email,
-          mobile: userData.mobile,
-          password: hashedPassword,
-          role: 'participant',
-        })
-        .returning();
-
-      userId = newUser.id;
-      purchaserEmail = newUser.email;
-      purchaserName = newUser.name;
-    }
-  }
-
-  const createdRegistrations: RegistrationRecord[] = [];
-  const newlyConfirmedRegistrationIds: number[] = [];
-  const splitAmounts = splitAmountAcrossSchedules(amount, normalizedScheduleIds.length);
-
-  for (const [index, scheduleId] of normalizedScheduleIds.entries()) {
-    const paidRegistration = await db
-      .select()
-      .from(registrations)
-      .where(
-        and(
-          eq(registrations.userId, userId),
-          eq(registrations.scheduleId, scheduleId),
-          eq(registrations.paymentStatus, 'PAID'),
-          ne(registrations.status, 'CANCELLED'),
-        ),
-      )
-      .limit(1);
-
-    if (paidRegistration.length > 0) {
-      createdRegistrations.push(paidRegistration[0]);
-      continue;
-    }
-
-    const pendingRegistration = await db
-      .select()
-      .from(registrations)
-      .where(
-        and(
-          eq(registrations.userId, userId),
-          eq(registrations.scheduleId, scheduleId),
-          ne(registrations.status, 'CANCELLED'),
-        ),
-      )
-      .limit(1);
-
-    const registrationAmount = splitAmounts[index];
-
-    if (pendingRegistration.length > 0) {
-      const [updatedRegistration] = await db
-        .update(registrations)
-        .set({
+          userId,
+          scheduleId,
+          registrationNumber: generateRegistrationNumber(),
           paymentId,
           paymentGateway,
           amountPaid: registrationAmount.toFixed(2),
           currency,
-          transactionDate: new Date(),
           paymentStatus: 'PAID',
           status: 'CONFIRMED',
-          updatedAt: new Date(),
+          transactionDate: new Date(),
           notes: `Payment confirmed via ${paymentGateway.toUpperCase()}`,
         })
-        .where(eq(registrations.id, pendingRegistration[0].id))
         .returning();
 
-      createdRegistrations.push(updatedRegistration);
-      newlyConfirmedRegistrationIds.push(updatedRegistration.id);
-      continue;
+      await tx
+        .update(courseSchedules)
+        .set({
+          enrollmentCount: sql`${courseSchedules.enrollmentCount} + 1`,
+          capacityRemaining: sql`CASE WHEN ${courseSchedules.capacityRemaining} IS NOT NULL THEN ${courseSchedules.capacityRemaining} - 1 ELSE NULL END`,
+          updatedAt: new Date(),
+        })
+        .where(eq(courseSchedules.id, scheduleId));
+
+      createdRegistrations.push(newRegistration);
+      newlyConfirmedRegistrationIds.push(newRegistration.id);
     }
 
-    const [newRegistration] = await db
-      .insert(registrations)
-      .values({
-        userId,
-        scheduleId,
-        registrationNumber: generateRegistrationNumber(),
-        paymentId,
-        paymentGateway,
-        amountPaid: registrationAmount.toFixed(2),
-        currency,
-        paymentStatus: 'PAID',
-        status: 'CONFIRMED',
-        transactionDate: new Date(),
-        notes: `Payment confirmed via ${paymentGateway.toUpperCase()}`,
-      })
-      .returning();
-
-    await db
-      .update(courseSchedules)
-      .set({
-        enrollmentCount: sql`${courseSchedules.enrollmentCount} + 1`,
-        capacityRemaining: sql`CASE WHEN ${courseSchedules.capacityRemaining} IS NOT NULL THEN ${courseSchedules.capacityRemaining} - 1 ELSE NULL END`,
-        updatedAt: new Date(),
-      })
-      .where(eq(courseSchedules.id, scheduleId));
-
-    createdRegistrations.push(newRegistration);
-    newlyConfirmedRegistrationIds.push(newRegistration.id);
-  }
-
-  if (typeof userIdOrData === 'number') {
-    await db.delete(cartItems).where(eq(cartItems.userId, userIdOrData));
-  }
-
-  if (req?.session) {
-    req.session.cart = [];
-  }
-
-  let emailSent = false;
-  if (newlyConfirmedRegistrationIds.length > 0 && purchaserEmail) {
-    try {
-      const emailRegistrations = await fetchRegistrationEmailDetails(newlyConfirmedRegistrationIds);
-      await sendPaymentConfirmationEmail({
-        email: purchaserEmail,
-        customerName: purchaserName,
-        paymentGateway,
-        paymentId,
-        totalAmount: amount,
-        currency,
-        registrations: emailRegistrations.map((registration) => ({
-          registrationNumber: registration.registrationNumber,
-          courseName: registration.courseName,
-          mentorName: registration.mentorName,
-          startDate: registration.startDate,
-          endDate: registration.endDate,
-          amountPaid: registration.amountPaid,
-        })),
-      });
-      emailSent = true;
-    } catch (error) {
-      console.error('Payment confirmation email failed:', error);
+    if (typeof userIdOrData === 'number') {
+      await tx.delete(cartItems).where(eq(cartItems.userId, userIdOrData));
     }
-  }
 
-  return {
-    registrations: createdRegistrations,
-    registrationNumbers: createdRegistrations.map((registration) => registration.registrationNumber),
-    primaryRegistrationNumber: createdRegistrations[0]?.registrationNumber ?? null,
-    purchaserEmail,
-    purchaserName,
-    emailSent,
-  };
+    if (req?.session) {
+      req.session.cart = [];
+    }
+
+    let emailSent = false;
+    if (newlyConfirmedRegistrationIds.length > 0 && purchaserEmail) {
+      try {
+        // Use tx for fetching email details too to keep it consistent, though select is fine on db
+        const rows = await tx
+          .select({
+            registrationId: registrations.id,
+            registrationNumber: registrations.registrationNumber,
+            amountPaid: registrations.amountPaid,
+            courseName: courses.name,
+            mentorName: mentors.name,
+            startDate: courseSchedules.startDate,
+            endDate: courseSchedules.endDate,
+          })
+          .from(registrations)
+          .innerJoin(courseSchedules, eq(registrations.scheduleId, courseSchedules.id))
+          .innerJoin(courses, eq(courseSchedules.courseId, courses.id))
+          .innerJoin(mentors, eq(courseSchedules.mentorId, mentors.id))
+          .where(inArray(registrations.id, newlyConfirmedRegistrationIds));
+
+        await sendPaymentConfirmationEmail({
+          email: purchaserEmail,
+          customerName: purchaserName,
+          paymentGateway,
+          paymentId,
+          totalAmount: amount,
+          currency,
+          registrations: rows.map((registration) => ({
+            registrationNumber: registration.registrationNumber,
+            courseName: registration.courseName,
+            mentorName: registration.mentorName,
+            startDate: registration.startDate,
+            endDate: registration.endDate,
+            amountPaid: registration.amountPaid,
+          })),
+        });
+        emailSent = true;
+      } catch (error) {
+        console.error('Payment confirmation email failed:', error);
+      }
+    }
+
+    return {
+      registrations: createdRegistrations,
+      registrationNumbers: createdRegistrations.map((registration) => registration.registrationNumber),
+      primaryRegistrationNumber: createdRegistrations[0]?.registrationNumber ?? null,
+      purchaserEmail,
+      purchaserName,
+      emailSent,
+    };
+  });
 }
 
 export const createRazorpayOrder = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const amount = Number(req.body.amount);
   const scheduleIds = parseNumericIds(req.body.scheduleIds ?? req.body.scheduleId);
   const userData = normalizeCheckoutUserData(req.body.userData);
 
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new AppError(400, 'A valid amount is required');
-  }
-
   await fetchValidSchedules(scheduleIds);
+  const amount = await calculateTotalAmount(scheduleIds);
   ensureGuestCheckoutDetails(req, userData);
 
   try {
@@ -564,15 +605,11 @@ export const verifyRazorpayPayment = asyncHandler(async (req: CustomRequest, res
 });
 
 export const createStripePaymentIntent = asyncHandler(async (req: CustomRequest, res: Response) => {
-  const amount = Number(req.body.amount);
   const scheduleIds = parseNumericIds(req.body.scheduleIds ?? req.body.scheduleId);
   const userData = normalizeCheckoutUserData(req.body.userData);
 
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new AppError(400, 'A valid amount is required');
-  }
-
   await fetchValidSchedules(scheduleIds);
+  const amount = await calculateTotalAmount(scheduleIds);
   ensureGuestCheckoutDetails(req, userData);
 
   try {

@@ -4,9 +4,9 @@ import config from '../config/env';
 import { CustomRequest } from '../types/common';
 import { db, users } from '../models';
 import { eq } from 'drizzle-orm';
-import { AppError } from './errorHandler';
+import { AppError, asyncHandler } from './errorHandler';
 
-export const verifyToken = (req: CustomRequest, res: Response, next: NextFunction): void => {
+export const verifyToken = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -17,8 +17,23 @@ export const verifyToken = (req: CustomRequest, res: Response, next: NextFunctio
     const token = authHeader.substring(7);
     const decoded: any = jwt.verify(token, config.JWT_SECRET);
 
+    const userId = parseInt(decoded.id, 10);
+    const results = await db.select({ status: users.status })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const user = results[0];
+    if (!user) {
+      throw new AppError(401, 'User not found');
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new AppError(403, 'Account is inactive or banned');
+    }
+
     req.user = {
-      id: parseInt(decoded.id, 10),
+      id: userId,
       role: decoded.role,
     };
 
@@ -29,25 +44,35 @@ export const verifyToken = (req: CustomRequest, res: Response, next: NextFunctio
     }
     throw new AppError(401, 'Invalid or expired token');
   }
-};
+});
 
-export const optionalVerifyToken = (req: CustomRequest, res: Response, next: NextFunction): void => {
+export const optionalVerifyToken = asyncHandler(async (req: CustomRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
       const decoded: any = jwt.verify(token, config.JWT_SECRET);
-      req.user = {
-        id: parseInt(decoded.id, 10),
-        role: decoded.role,
-      };
+      
+      const userId = parseInt(decoded.id, 10);
+      const results = await db.select({ status: users.status })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      const user = results[0];
+      if (user && user.status === 'ACTIVE') {
+        req.user = {
+          id: userId,
+          role: decoded.role,
+        };
+      }
     }
     next();
   } catch (error) {
     // If invalid token, proceed without user
     next();
   }
-};
+});
 
 export const verifyAdmin = async (
   req: CustomRequest,

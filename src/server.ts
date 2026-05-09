@@ -11,6 +11,7 @@ import { connectDB } from './config/database';
 import { errorHandler } from './middleware/errorHandler';
 import routes from './routes';
 import { handleRazorpayWebhook, handleStripeWebhook } from './controllers/user/paymentController';
+import { verifyToken } from './middleware/auth';
 
 const app = express();
 app.disable('x-powered-by');
@@ -40,8 +41,7 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // CORS Configuration
-const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, '');
-const ALLOWED_ORIGINS = config.CORS_ALLOWED_ORIGINS || "*";
+const ALLOWED_ORIGINS = config.CORS_ALLOWED_ORIGINS || [];
 
 app.use(
   cors({
@@ -49,9 +49,7 @@ app.use(
       // Allow requests with no origin (like mobile apps or curl)
       if (!origin) return callback(null, true);
 
-      const normalizedOrigin = normalizeOrigin(origin);
-
-      if (ALLOWED_ORIGINS.includes(normalizedOrigin)) {
+      if (ALLOWED_ORIGINS.includes("*") || (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin))) {
         return callback(null, true);
       }
 
@@ -100,11 +98,9 @@ const securityHeaderMiddleware = (req: Request, res: Response, next: NextFunctio
   }
 
   const appToken = req.headers['x-cms-app-token'];
-  // LOGGING FOR DEBUGGING
-  console.log(`[Security] ${req.method} ${req.originalUrl} - Token: ${appToken}`);
   
   if (appToken !== config.APP_TOKEN) {
-    console.error(`[Security] Token Mismatch! Received: ${appToken}, Expected: ${config.APP_TOKEN}`);
+    console.error(`[Security] Token Mismatch! Access denied for ${req.method} ${req.originalUrl}`);
     return res.status(403).json({
       success: false,
       message: 'Access denied: Invalid application token',
@@ -113,20 +109,21 @@ const securityHeaderMiddleware = (req: Request, res: Response, next: NextFunctio
   next();
 };
 
+// Apply security header middleware to all /api routes
 app.use('/api', securityHeaderMiddleware);
 
 /**
  * Body Parser Middleware
  */
-app.use(express.json({ limit: '10mb' })); // Reduced limit for better security
+app.use(express.json({ limit: '10mb' })); 
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 
 /**
  * Static Files
+ * Added auth to protect sensitive files like resumes and brochures
  */
-
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', verifyToken, express.static(path.join(__dirname, '../uploads')));
 
 /**
  * API Routes
