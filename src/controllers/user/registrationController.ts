@@ -226,56 +226,6 @@ export const getRegistrationDetails = asyncHandler(async (req: CustomRequest, re
 });
 
 /**
- * Process Payment
- */
-export const processPayment = asyncHandler(async (req: CustomRequest, res: Response) => {
-  if (!req.user) {
-    throw new AppError(401, 'User not authenticated');
-  }
-
-  const { paymentId, amountPaid, currency = 'INR' } = req.body;
-  const registrationId = parseInt(req.params.registrationId);
-
-  if (!paymentId || !amountPaid) {
-    throw new AppError(400, 'Payment details are required');
-  }
-
-  const results = await db.select().from(registrations).where(and(eq(registrations.id, registrationId), eq(registrations.userId, req.user.id))).limit(1);
-
-  if (results.length === 0) {
-    throw new AppError(404, 'Registration not found');
-  }
-
-  const registration = results[0];
-
-  if (registration.paymentStatus === 'PAID') {
-    throw new AppError(400, 'Payment already processed');
-  }
-
-  const [updated] = await db.update(registrations)
-    .set({
-      paymentId,
-      amountPaid: amountPaid.toString(),
-      currency,
-      paymentStatus: 'PAID',
-      status: 'CONFIRMED',
-      transactionDate: new Date(),
-      updatedAt: new Date()
-    })
-    .where(eq(registrations.id, registrationId))
-    .returning();
-
-  const response = formatResponse(
-    true,
-    updated,
-    'Payment processed successfully. Registration confirmed!',
-    200
-  );
-
-  res.status(200).json(response);
-});
-
-/**
  * Cancel Registration
  */
 export const cancelRegistration = asyncHandler(async (req: CustomRequest, res: Response) => {

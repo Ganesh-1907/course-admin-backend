@@ -14,9 +14,6 @@ router.post('/', registrationController.registerForCourse);
 router.get('/', registrationController.getUserRegistrations);
 router.get('/:registrationId', registrationController.getRegistrationDetails);
 
-// Payment
-router.post('/:registrationId/payment', registrationController.processPayment);
-
 // Cancellation
 router.patch('/:registrationId/cancel', registrationController.cancelRegistration);
 
